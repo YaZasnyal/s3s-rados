@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{fmt::Debug, os::raw::c_void};
 
 use bytes::BufMut;
@@ -62,7 +62,8 @@ impl blob_store::BlobStore for RadosBlobStore {
         key: &str,
         offset: u64,
         length: u64,
-    ) -> Result<core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>, s3s::S3Error> {
+    ) -> Result<core::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, s3s::S3Error>> + Send + Sync>>, s3s::S3Error>
+    {
         let ioctx = self.rados.get_rados_ioctx();
         let ioctx = try_!(ioctx);
         Ok(Box::pin(RadosReader::new(ioctx, key, offset, length)))
@@ -143,11 +144,12 @@ impl tokio::io::AsyncWrite for RadosWriter {
 }
 
 struct RadosReader {
-    rados_striper: StriperWrp,
+    rados_striper: Arc<Mutex<StriperWrp>>,
     name: String,
-    buf: bytes::buf::Writer<bytes::BytesMut>,
+    buf: bytes::BytesMut,
     offset: u64,
     length: u64,
+    cursur: u64,
 }
 
 impl RadosReader {
@@ -156,22 +158,47 @@ impl RadosReader {
         let rados_striper = ioctx.get_rados_striper().unwrap();
 
         Self {
-            rados_striper: StriperWrp { inner: rados_striper },
+            rados_striper: Arc::new(Mutex::new(StriperWrp { inner: rados_striper })),
             name: name.to_owned(),
-            buf: buf,
+            buf: bytes::BytesMut::with_capacity(STRIPE_SIZE),
             offset: offset,
             length: length,
+            cursur: offset,
         }
     }
 }
 
-impl tokio::io::AsyncRead for RadosReader {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        todo!()
+// impl tokio::io::AsyncRead for RadosReader {
+//     fn poll_read(
+//         mut self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &mut tokio::io::ReadBuf<'_>,
+//     ) -> std::task::Poll<std::io::Result<()>> {
+//         let next_read = std::cmp::min(self.offset + self.length - self.cursur, STRIPE_SIZE as u64);
+//         if next_read == 0 {
+//             return std::task::Poll::Ready(Ok(()));
+//         }
+
+//         //self.buf.
+//         //buf.
+//         //self.rados_striper.inner.rados_object_read(&self.name, fill_buffer, self.cursur)
+//         todo!()
+//     }
+// }
+
+impl futures::Stream for RadosReader {
+    type Item = Result<bytes::Bytes, s3s::S3Error>;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        let next_read = std::cmp::min(self.offset + self.length - self.cursur, STRIPE_SIZE as u64);
+        if next_read == 0 {
+            return std::task::Poll::Ready(None);
+        }
+
+        let v = vec![0; 10];
+        let b = bytes::Bytes::copy_from_slice(&v);
+        self.cursur = self.cursur + b.len() as u64;
+        std::task::Poll::Ready(Some(Ok(b)))
     }
 }
 

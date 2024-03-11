@@ -1832,6 +1832,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "futures-core",
  "hex-simd",
  "hyper",
  "md-5",

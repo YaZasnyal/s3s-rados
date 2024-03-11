@@ -1,11 +1,11 @@
 use futures::StreamExt;
 use hyper::body;
+use md5::{Digest, Md5};
 use s3s::dto::*;
 use s3s::{s3_error, S3Request, S3Response, S3Result, S3};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
-use md5::{Digest, Md5};
 
 use crate::blob_store::BlobStore;
 use crate::ceph_store::RadosBlobStore;
@@ -74,31 +74,36 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn get_object(&self, _req: S3Request<GetObjectInput>) -> S3Result<S3Response<GetObjectOutput>> {
-        // TODO: validate user
-        // let Some((object, blob)) = self.db.load_object_metadata(&req.input.bucket, &req.input.key, &None).await? else {
-        //     return Err(s3_error!(NoSuchKey, "Key not found"));
-        // };
+    async fn get_object(&self, req: S3Request<GetObjectInput>) -> S3Result<S3Response<GetObjectOutput>> {
+        //TODO: validate user
+        let Some((object, blob)) = self.db.load_object_metadata(&req.input.bucket, &req.input.key, &None).await? else {
+            return Err(s3_error!(NoSuchKey, "Key not found"));
+        };
 
-        // let Some(blob) = blob else {
-        //     return Err(s3_error!(NoSuchKey, "Versioning is not supported yet"));
-        // };
+        let Some(blob) = blob else {
+            return Err(s3_error!(NoSuchKey, "Versioning is not supported yet"));
+        };
 
-        // let output = GetObjectOutput {
-        //     body: Some(StreamingBlob::wrap(body)),
-        //     content_length: Some(content_length_i64),
-        //     content_range,
-        //     last_modified: Some(last_modified),
-        //     metadata: None, // TODO: handle metadata
-        //     e_tag: Some(blob.etag),
-        //     checksum_crc32: None,
-        //     checksum_crc32c: None,
-        //     checksum_sha1: None,
-        //     checksum_sha256: None,
-        //     ..Default::default()
-        // };
-        // Ok(S3Response::new(output))
-        Err(s3_error!(NotImplemented, "GetObject is not implemented yet"))
+        let bytes = self.blob.get_reader(&blob.id.to_string(), 0, blob.size as u64).await?;
+        let output = GetObjectOutput {
+            body: Some(StreamingBlob::wrap(bytes)),
+            content_length: blob.size,
+            content_range: None,
+            last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
+                object.last_modified.date(),
+                object.last_modified.time(),
+                time::UtcOffset::UTC,
+            ))),
+            metadata: None, // TODO: handle metadata
+            e_tag: None,//Some(blob.etag),
+            checksum_crc32: None,
+            checksum_crc32c: None,
+            checksum_sha1: None,
+            checksum_sha256: None,
+            ..Default::default()
+        };
+        Ok(S3Response::new(output))
+        //Err(s3_error!(NotImplemented, "GetObject is not implemented yet"))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -107,7 +112,7 @@ impl S3 for RadosStore {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
         };
         // check ownership
-Ok(S3Response::new(HeadBucketOutput {}))
+        Ok(S3Response::new(HeadBucketOutput {}))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -130,6 +135,7 @@ Ok(S3Response::new(HeadBucketOutput {}))
                 time::UtcOffset::UTC,
             ))),
             metadata: None,
+            e_tag: Some(blob.etag),
             ..Default::default()
         };
         Ok(S3Response::new(output))
@@ -210,8 +216,9 @@ Ok(S3Response::new(HeadBucketOutput {}))
         // let Some(content_md5) = content_md5 else  {
         //     return Err(s3_error!(InvalidArgument, "No MD5 hash provided")); // TODO: should not be an error
         // };
-        let Some(content_length) = content_length else  {
-            return Err(s3_error!(InvalidArgument, "content_length not provided")); // TODO: should not be an error
+        let Some(content_length) = content_length else {
+            return Err(s3_error!(InvalidArgument, "content_length not provided"));
+            // TODO: should not be an error
         };
 
         tracing::info!("Request validation is done");
@@ -227,7 +234,7 @@ Ok(S3Response::new(HeadBucketOutput {}))
         };
         self.db.write_temp_blob(&new_blob).await?;
         tracing::info!(blob=?new_blob, "temp blob has been written");
-        
+
         let res: Result<crate::meta_store::Object, s3s::S3Error> = {
             // open rados file
             let mut writer = try_!(self.blob.get_writer(&new_blob.id.to_string()).await);

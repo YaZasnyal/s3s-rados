@@ -6,5 +6,5 @@ pub trait BlobStore: Send + Sync + std::fmt::Debug + 'static {
         key: &str,
         offset: u64,
         length: u64,
-    ) -> Result<core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>, s3s::S3Error>;
+    ) -> Result<core::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, s3s::S3Error>> + Send + Sync>>, s3s::S3Error>;
 }
