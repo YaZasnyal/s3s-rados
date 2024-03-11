@@ -24,32 +24,35 @@ CREATE INDEX buckets_user_id ON buckets(user_id);
 
 CREATE TABLE blobs (
     id uuid PRIMARY KEY,
+    size bigint not null,
     parts smallint,
-    part_size bigint
+    part_size bigint,
+    uploaded_at timestamp not null,
+    etag varchar not null
 );
 
 CREATE TABLE objects (
     bucket varchar not null,
     oid varchar not null,
-    version_id bigserial,
     last_modified timestamp not null,
     blob uuid,
 
-    PRIMARY KEY(bucket, oid),
+    PRIMARY KEY(bucket, oid, last_modified),
     CONSTRAINT bucket_id_fk FOREIGN KEY (bucket) REFERENCES buckets(name) ON DELETE RESTRICT,
     CONSTRAINT blob_id_fk FOREIGN KEY (blob) REFERENCES blobs(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE temp_blobs (
-    id bigserial PRIMARY KEY,
-    bucket varchar not null,
-    oid varchar not null,
-    blob_id uuid,
-    last_modified timestamp not null
+    blob_id uuid PRIMARY KEY,
+    uploaded_at timestamp not null
 
     -- no CONSTRAINTs
 );
--- CREATE INDEX buckets_user_id ON buckets(user_id);
+CREATE INDEX temp_blobs_uploaded_at ON temp_blobs(uploaded_at);
+
+CREATE TABLE blobs_gc (
+    id uuid PRIMARY KEY
+);
 
 INSERT INTO users (id, name, email) VALUES ('root', 'Root user', 'root@example.org');
 -- TODO: remove

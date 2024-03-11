@@ -54,19 +54,6 @@ impl blob_store::BlobStore for RadosBlobStore {
     async fn get_writer(&self, key: &str) -> Result<core::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>, s3s::S3Error> {
         let ioctx = self.rados.get_rados_ioctx();
         let ioctx = try_!(ioctx);
-        // let key = key.to_owned();
-        // tokio::task::spawn_blocking(move || {
-        //     let rados_striper = ioctx.get_rados_striper().unwrap();
-
-        //     let mut written: u64 = 0;
-        //     let dummy_data = vec![0; 40];
-        //     while written < 40 {
-        //         rados_striper.rados_object_write(&key, &dummy_data, written).unwrap();
-        //         written += dummy_data.len() as u64;
-        //     }
-        // })
-        // .await
-        // .unwrap();
         Ok(Box::pin(RadosWriter::new(ioctx, key)))
     }
 }

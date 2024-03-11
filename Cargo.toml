@@ -12,7 +12,7 @@ s3s = "0.8.1"
 hyper = { version = "0.14.27", features = ["http1", "http2", "server", "stream", "runtime"] }
 tokio = { version = "1.36.0", features = ["full", "fs", "io-util"] }
 async-trait = "0.1.77"
-sqlx = {version = "0.7.3", features = ["sqlite", "postgres", "runtime-tokio-rustls", "time"] }
+sqlx = {version = "0.7.3", features = ["sqlite", "postgres", "runtime-tokio-rustls", "time", "uuid"] }
 uuid = { version = "1.7.0", features = ["v4", "fast-rng"] }
 thiserror = "1.0.57"
 chrono = "0.4.35"
@@ -29,3 +29,7 @@ tonic = "0.11.0"
 time = "0.3.34"
 futures = "0.3.30"
 bytes = "1.5.0"
+md-5 = "0.10.6"
+hex-simd = "0.8.0"
+memoize = "0.4.2"
+anyhow = "1.0.80"

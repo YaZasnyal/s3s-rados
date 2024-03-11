@@ -33,10 +33,7 @@ pub enum MetaStoreError {
 
 #[async_trait::async_trait]
 pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
-    /// Writes object metadata to the temp storage. This is a first stage of the two-phase-commit
-    /// 2PC allow to clean data from the storage if an error occures.
-    ///
-    /// Must also commit blob from temp_blob in one atomic operation
+    /// Write complete object metadata and commit temporary blob
     /// 
     /// TODO: Handle versioned
     async fn write_object_metadata_with_blob(
@@ -44,7 +41,7 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
         bucket: &Bucket,
         object: &Object,
         blob: &Blob,
-    ) -> Result<(), MetaStoreError>;
+    ) -> Result<(), s3s::S3Error>;
 
 
     async fn write_object_metadata(
@@ -76,10 +73,13 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
 
     /// Writes blob metadata to the temp storage. This is a first stage of the two-phase-commit
     /// 2PC allow to clean data from the storage if an error occures.
-    /// 
-    /// commit - do nothing
-    /// rollback - push info to the GC log
-    async fn write_blob(&self, blob: &Blob) -> Result<Box<dyn Transaction>, s3s::S3Error>;
+    async fn write_temp_blob(&self, blob: &Blob) -> Result<(), s3s::S3Error>;
+
+    /// Does not return any error because GC should handle failures
+    async fn clean_temp_blob(&self, blob: &Blob);
+    /// Remove commited blob asynchronously
+    async fn add_blob_gc(&self, blob: &Blob) -> Result<User, s3s::S3Error>;
+
 
     // list objects (with prefix)
 
@@ -93,8 +93,8 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
     // user metadata
     async fn get_user_by_access_key(&self, key: &str) -> Result<User, s3s::S3Error>;
 
-    // gc log
     // config log
+    async fn get_blob_gc(&self) -> anyhow::Result<Vec<Uuid>>;
 }
 
 pub type AccountId = s3s::dto::AccountId;
@@ -173,29 +173,31 @@ pub struct Object {
     pub bucket_name: String,
     pub oid: String,
     pub version_id: Option<String>,
-    pub last_modified: s3s::dto::Timestamp,
+    pub last_modified: Timestamp,
 
     /// Unique indentifier of the blob (acts as etag)
     pub blob_id: Option<Uuid>,
 
-    pub metadata: s3s::dto::Metadata,
-    // pub etag: String,
-
-    // checksums (crc32, crc32c, sha1, sha256)
-    // pub crc32: Option<u32>,
-    // pub crc32c: Option<u32>,
-    // pub sha1: Option<ChecksumSHA1>,
-    // pub sha256: Option<ChecksumSHA256>,
+    pub metadata: Option<s3s::dto::Metadata>,
+    
     // retain_untill
     // legal_hold
 }
 
+#[derive(Debug, Clone)]
 pub struct Blob {
     pub id: Uuid,
+    /// total size of the blob
+    pub size: i64,
+    /// number of parts for multipart blobs
     pub parts: Option<u32>,
+    /// size of a single part (excluding the last one)
     pub part_size: Option<u32>,
+    pub upload_timestamp: Timestamp,
     //storage_class: String,
     /// MD5 or MD5 of all the parts
+    /// 
+    /// TODO: select better database type
     pub etag: String,
     // pub checksum_algorithm: Option<String>,
     // pub checksum: Option<String>,

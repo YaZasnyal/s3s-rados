@@ -1,12 +1,14 @@
 use std::fmt::Debug;
 
+use sqlx::pool::PoolConnection;
 use tracing::{debug_span, Instrument};
+use uuid::Uuid;
 
-use crate::meta_store::{Blob, Bucket, MetaStore, MetaStoreError, Object, Transaction};
 use crate::meta_store::User;
+use crate::meta_store::{Blob, Bucket, MetaStore, MetaStoreError, Object, Transaction, TransactionError};
 use sqlx::postgres::PgPool;
-use sqlx::Connection;
 use sqlx::Row;
+use sqlx::{Connection, PgConnection, Postgres};
 
 pub struct PostgresDatabase {
     db_conn: PgPool,
@@ -67,8 +69,70 @@ impl Debug for PostgresDatabase {
 
 #[async_trait::async_trait]
 impl MetaStore for PostgresDatabase {
-    async fn write_object_metadata_with_blob(&self, bucket: &Bucket, object: &Object, blob: &Blob) -> Result<(), MetaStoreError> {
-        todo!()
+    async fn write_object_metadata_with_blob(&self, bucket: &Bucket, object: &Object, blob: &Blob) -> Result<(), s3s::S3Error> {
+        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
+        try_!(
+            sqlx::query("DELETE FROM temp_blobs WHERE blob_id = $1;")
+                .bind(&blob.id)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_remove_temp_blob"))
+                .await
+        );
+
+        // check etag not empty
+        try_!(
+            sqlx::query("INSERT INTO blobs (id, size, uploaded_at, etag) VALUES ($1, $2, CURRENT_TIMESTAMP, $3);")
+                .bind(&blob.id)
+                .bind(blob.size)
+                .bind(&blob.etag)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_insert_permanent_blob"))
+                .await
+        );
+
+        // TODO: handle versioned
+        let old = try_!(
+            sqlx::query("SELECT (blob) FROM objects WHERE objects.bucket = $1 AND objects.oid = $2")
+                .bind(&object.bucket_name)
+                .bind(&object.oid)
+                .fetch_optional(&mut *tx)
+                .instrument(debug_span!("db_fetch_previous_version"))
+                .await
+        );
+        if let Some(old) = old {
+            let old_blob_id: Uuid = old.get("blob");
+            try_!(
+                sqlx::query("INSERT INTO blobs_gc (id) VALUES ($1);")
+                    .bind(&old_blob_id)
+                    .execute(&mut *tx)
+                    .instrument(debug_span!("db_put_old_blob_gc"))
+                    .await
+            );
+            try_!(
+                sqlx::query("DELETE FROM objects WHERE objects.bucket = $1 AND objects.oid = $2")
+                    .bind(&object.bucket_name)
+                    .bind(&object.oid)
+                    .execute(&mut *tx)
+                    .instrument(debug_span!("db_delete_old_object"))
+                    .await
+            );
+        }
+
+        // TODO: manage object raplacement
+        try_!(
+            sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES ($1, $2, CURRENT_TIMESTAMP, $3)")
+                .bind(&object.bucket_name)
+                .bind(&object.oid)
+                .bind(&blob.id)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_insert_object_info"))
+                .await
+        );
+        // create object or object version
+        // put blob metadata and remove temp_blob
+        //
+        try_!(tx.commit().await);
+        Ok(())
     }
 
     async fn write_object_metadata(
@@ -99,7 +163,28 @@ impl MetaStore for PostgresDatabase {
         todo!()
     }
 
-    async fn write_blob(&self, blob: &Blob) -> Result<Box<dyn Transaction>, s3s::S3Error> {
+    #[tracing::instrument(level = "debug")]
+    async fn write_temp_blob(&self, blob: &Blob) -> Result<(), s3s::S3Error> {
+        try_!(
+            sqlx::query("INSERT INTO temp_blobs (blob_id, uploaded_at) VALUES ($1, CURRENT_TIMESTAMP)")
+                .bind(&blob.id)
+                .execute(&self.db_conn)
+                .await
+        );
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug")]
+    async fn clean_temp_blob(&self, blob: &Blob) {
+        sqlx::query("DELETE FROM temp_blobs WHERE blob_id = $1;")
+            .bind(&blob.id)
+            .execute(&self.db_conn)
+            .await
+            .ok();
+    }
+
+    async fn add_blob_gc(&self, blob: &Blob) -> Result<User, s3s::S3Error> {
         todo!()
     }
 
@@ -208,5 +293,38 @@ impl MetaStore for PostgresDatabase {
             name: try_!(res.try_get("name")),
             email: try_!(res.try_get("email")),
         })
+    }
+
+    async fn get_blob_gc(&self) -> anyhow::Result<Vec<Uuid>> {
+        let res = sqlx::query("SELECT (id) FROM blobs_gc LIMIT 1000")
+            .fetch_all(&self.db_conn)
+            .await?;
+        Ok(res
+            .into_iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").expect("Unable to convert table");
+                id
+            })
+            .collect())
+    }
+}
+
+struct BlobTransaction {
+    conn: PoolConnection<Postgres>,
+    blob: Blob,
+}
+
+#[async_trait::async_trait]
+impl Transaction for BlobTransaction {
+    fn chain(&mut self, next: Box<dyn Transaction>) {
+        todo!()
+    }
+
+    async fn commit(self: Box<Self>) -> Result<(), TransactionError> {
+        todo!()
+    }
+
+    async fn rollback(self: Box<Self>) -> Result<(), TransactionError> {
+        todo!()
     }
 }

@@ -57,7 +57,7 @@ struct Opt {
     pool: String,
 
     /// Opentelemetry endpoint (http://ip:port)
-    #[arg(long, default_value = "http://localhost:4317")]
+    #[arg(long)]
     otlp_endpoint: Option<String>,
 }
 
