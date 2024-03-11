@@ -56,6 +56,17 @@ impl blob_store::BlobStore for RadosBlobStore {
         let ioctx = try_!(ioctx);
         Ok(Box::pin(RadosWriter::new(ioctx, key)))
     }
+
+    async fn get_reader(
+        &self,
+        key: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>, s3s::S3Error> {
+        let ioctx = self.rados.get_rados_ioctx();
+        let ioctx = try_!(ioctx);
+        Ok(Box::pin(RadosReader::new(ioctx, key, offset, length)))
+    }
 }
 
 const STRIPE_SIZE: usize = 4 * 1024 * 1024;
@@ -94,7 +105,10 @@ impl tokio::io::AsyncWrite for RadosWriter {
             // flush to the rados file
             let data = (*writer).get_mut().split().freeze();
             let offset = self.offset;
-            self.rados_striper.inner.rados_object_write(&self.name, &data, offset).unwrap();
+            self.rados_striper
+                .inner
+                .rados_object_write(&self.name, &data, offset)
+                .unwrap();
             self.offset = offset + data.len() as u64;
         }
         std::task::Poll::Ready(Ok(buf.len()))
@@ -112,7 +126,10 @@ impl tokio::io::AsyncWrite for RadosWriter {
 
         let data = writer.get_mut().split().freeze();
         let offset = self.offset;
-        self.rados_striper.inner.rados_object_write(&self.name, &data, offset).unwrap();
+        self.rados_striper
+            .inner
+            .rados_object_write(&self.name, &data, offset)
+            .unwrap();
         self.offset = offset + data.len() as u64;
         std::task::Poll::Ready(Ok(()))
     }
@@ -122,6 +139,39 @@ impl tokio::io::AsyncWrite for RadosWriter {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), std::io::Error>> {
         std::task::Poll::Ready(Ok(()))
+    }
+}
+
+struct RadosReader {
+    rados_striper: StriperWrp,
+    name: String,
+    buf: bytes::buf::Writer<bytes::BytesMut>,
+    offset: u64,
+    length: u64,
+}
+
+impl RadosReader {
+    fn new(ioctx: ceph::ceph::IoCtx, name: &str, offset: u64, length: u64) -> Self {
+        let buf = bytes::BytesMut::with_capacity(2 * STRIPE_SIZE).writer();
+        let rados_striper = ioctx.get_rados_striper().unwrap();
+
+        Self {
+            rados_striper: StriperWrp { inner: rados_striper },
+            name: name.to_owned(),
+            buf: buf,
+            offset: offset,
+            length: length,
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for RadosReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        todo!()
     }
 }
 

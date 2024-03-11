@@ -150,8 +150,56 @@ impl MetaStore for PostgresDatabase {
         bucket: &str,
         object: &str,
         version: &Option<s3s::dto::ObjectVersionId>,
-    ) -> Result<s3s::dto::Metadata, MetaStoreError> {
-        todo!()
+    ) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error> {
+        // TODO: handle version
+        let row = try_!(
+            sqlx::query(
+                r#"SELECT
+                        *
+                    FROM
+                        OBJECTS
+                        LEFT OUTER JOIN BLOBS ON OBJECTS.BLOB = BLOBS.ID
+                    WHERE
+                        OBJECTS.BUCKET = $1
+                        AND OBJECTS.OID = $2
+                    ORDER BY
+                        OBJECTS.LAST_MODIFIED DESC
+                    LIMIT
+                        1"#
+            )
+            .bind(bucket)
+            .bind(object)
+            .fetch_optional(&self.db_conn)
+            .await
+        );
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let object = Object {
+            bucket_name: bucket.to_owned(),
+            oid: object.to_owned(),
+            version_id: None, // TODO: handle version
+            last_modified: try_!(row.try_get("last_modified")),
+            blob_id: try_!(row.try_get("blob")),
+            metadata: None, // TODO: handle metadata
+        };
+
+        let blob = if object.blob_id.is_some() {
+            Some(Blob {
+                id: try_!(row.try_get("id")),
+                size: try_!(row.try_get("size")),
+                parts: try_!(row.try_get("parts")),
+                part_size: try_!(row.try_get("part_size")),
+                upload_timestamp: try_!(row.try_get("uploaded_at")),
+                etag: try_!(row.try_get("etag")),
+            })
+        } else {
+            None
+        };
+
+        Ok(Some((object, blob)))
     }
 
     async fn delete_object_metadata(

@@ -59,7 +59,7 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
         bucket: &str,
         object: &str,
         version: &Option<s3s::dto::ObjectVersionId>,
-    ) -> Result<s3s::dto::Metadata, MetaStoreError>;
+    ) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error>;
 
     /// This function does not delete object from the store. It is done by GC
     ///
@@ -190,9 +190,9 @@ pub struct Blob {
     /// total size of the blob
     pub size: i64,
     /// number of parts for multipart blobs
-    pub parts: Option<u32>,
+    pub parts: Option<i32>,
     /// size of a single part (excluding the last one)
-    pub part_size: Option<u32>,
+    pub part_size: Option<i64>,
     pub upload_timestamp: Timestamp,
     //storage_class: String,
     /// MD5 or MD5 of all the parts

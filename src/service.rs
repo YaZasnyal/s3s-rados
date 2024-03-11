@@ -75,6 +75,29 @@ impl S3 for RadosStore {
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn get_object(&self, _req: S3Request<GetObjectInput>) -> S3Result<S3Response<GetObjectOutput>> {
+        // TODO: validate user
+        // let Some((object, blob)) = self.db.load_object_metadata(&req.input.bucket, &req.input.key, &None).await? else {
+        //     return Err(s3_error!(NoSuchKey, "Key not found"));
+        // };
+
+        // let Some(blob) = blob else {
+        //     return Err(s3_error!(NoSuchKey, "Versioning is not supported yet"));
+        // };
+
+        // let output = GetObjectOutput {
+        //     body: Some(StreamingBlob::wrap(body)),
+        //     content_length: Some(content_length_i64),
+        //     content_range,
+        //     last_modified: Some(last_modified),
+        //     metadata: None, // TODO: handle metadata
+        //     e_tag: Some(blob.etag),
+        //     checksum_crc32: None,
+        //     checksum_crc32c: None,
+        //     checksum_sha1: None,
+        //     checksum_sha256: None,
+        //     ..Default::default()
+        // };
+        // Ok(S3Response::new(output))
         Err(s3_error!(NotImplemented, "GetObject is not implemented yet"))
     }
 
@@ -84,12 +107,32 @@ impl S3 for RadosStore {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
         };
         // check ownership
-        Ok(S3Response::new(HeadBucketOutput {}))
+Ok(S3Response::new(HeadBucketOutput {}))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn head_object(&self, _req: S3Request<HeadObjectInput>) -> S3Result<S3Response<HeadObjectOutput>> {
-        Err(s3_error!(NotImplemented, "HeadObject is not implemented yet"))
+    async fn head_object(&self, req: S3Request<HeadObjectInput>) -> S3Result<S3Response<HeadObjectOutput>> {
+        let Some((object, blob)) = self.db.load_object_metadata(&req.input.bucket, &req.input.key, &None).await? else {
+            return Err(s3_error!(NoSuchKey, "Key not found"));
+        };
+
+        let Some(blob) = blob else {
+            return Err(s3_error!(NoSuchKey, "Versioning is not supported yet"));
+        };
+        // check ownership
+
+        let output = HeadObjectOutput {
+            content_length: blob.size,
+            content_type: None,
+            last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
+                object.last_modified.date(),
+                object.last_modified.time(),
+                time::UtcOffset::UTC,
+            ))),
+            metadata: None,
+            ..Default::default()
+        };
+        Ok(S3Response::new(output))
     }
 
     #[tracing::instrument(level = "info")]
