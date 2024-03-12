@@ -149,7 +149,7 @@ impl MetaStore for PostgresDatabase {
         &self,
         bucket: &str,
         object: &str,
-        version: &Option<s3s::dto::ObjectVersionId>,
+        _version: &Option<s3s::dto::ObjectVersionId>,
     ) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error> {
         // TODO: handle version
         let row = try_!(
@@ -206,9 +206,44 @@ impl MetaStore for PostgresDatabase {
         &self,
         bucket: &str,
         object: &str,
-        version: &Option<s3s::dto::ObjectVersionId>,
-    ) -> Result<(), MetaStoreError> {
-        todo!()
+        _version: &Option<s3s::dto::ObjectVersionId>,
+    ) -> Result<(), s3s::S3Error> {
+        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
+        let row = try_!(
+            sqlx::query("SELECT (blob) FROM objects WHERE bucket = $1 AND oid = $2")
+                .bind(bucket)
+                .bind(object)
+                .fetch_optional(&mut *tx)
+                .instrument(debug_span!("db_check_object_exists"))
+                .await
+        );
+
+        // TODO: Handle versioned
+        let Some(row) = row else {
+            return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchKey));
+        };
+        let blob: Option<Uuid> = try_!(row.try_get("blob"));
+        if let Some(blob) = blob {
+            try_!(
+                sqlx::query("INSERT INTO blobs_gc (id) VALUES ($1)")
+                    .bind(blob)
+                    .execute(&mut *tx)
+                    .instrument(debug_span!("db_insert_blob_gc"))
+                    .await
+            );
+        }
+
+        try_!(
+            sqlx::query("DELETE FROM objects WHERE bucket = $1 AND oid = $2")
+                .bind(bucket)
+                .bind(object)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_delete_object"))
+                .await
+        );
+
+        try_!(tx.commit().await);
+        Ok(())
     }
 
     #[tracing::instrument(level = "debug")]
@@ -258,7 +293,18 @@ impl MetaStore for PostgresDatabase {
             .instrument(debug_span!("db_insert_bucket_info"))
             .await;
         try_!(res);
-        // TODO: insert partition
+
+        // create partition
+        try_!(
+            // does not want to bind table name for some reason
+            sqlx::query(&format!(
+                "CREATE TABLE {} PARTITION OF objects FOR VALUES IN ( '{}' );",
+                format!("objects_bucket_{}", bucket.replace("-", "_")), bucket
+            ))
+            .execute(&mut *tx)
+            .instrument("db_create_table_partition")
+            .await
+        );
 
         // fetch the result
         let res = sqlx::query("SELECT name, user_id, creation_date FROM buckets WHERE name = $1;")

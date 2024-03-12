@@ -64,13 +64,15 @@ impl S3 for RadosStore {
         // check bucket lock
         //self.db.
 
-        let del_res = self
-            .db
+        self.db
             .delete_object_metadata(&req.input.bucket, &req.input.key, &req.input.version_id)
-            .await;
-        //try_!(del_res);
+            .await?;
 
-        Err(s3_error!(NotImplemented, "DeleteObject is not implemented yet"))
+        Ok(S3Response::new(DeleteObjectOutput {
+            delete_marker: false, // TODO: handle versioned
+            request_charged: None,
+            version_id: None,
+        }))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -95,11 +97,11 @@ impl S3 for RadosStore {
                 time::UtcOffset::UTC,
             ))),
             metadata: None, // TODO: handle metadata
-            e_tag: None,//Some(blob.etag),
-            checksum_crc32: None,
-            checksum_crc32c: None,
-            checksum_sha1: None,
-            checksum_sha256: None,
+            e_tag: Some(blob.etag),
+            // checksum_crc32: None,
+            // checksum_crc32c: None,
+            // checksum_sha1: None,
+            // checksum_sha256: None,
             ..Default::default()
         };
         Ok(S3Response::new(output))
@@ -175,13 +177,13 @@ impl S3 for RadosStore {
         Ok(S3Response::new(output))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_objects(&self, _req: S3Request<ListObjectsInput>) -> S3Result<S3Response<ListObjectsOutput>> {
+    #[tracing::instrument(level = "debug")]
+    async fn list_objects(&self, req: S3Request<ListObjectsInput>) -> S3Result<S3Response<ListObjectsOutput>> {
         Err(s3_error!(NotImplemented, "ListObjects is not implemented yet"))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_objects_v2(&self, _req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
+    #[tracing::instrument(level = "debug")]
+    async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
         Err(s3_error!(NotImplemented, "ListObjectsV2 is not implemented yet"))
     }
 

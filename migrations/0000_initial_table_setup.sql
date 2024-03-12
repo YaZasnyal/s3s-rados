@@ -40,7 +40,8 @@ CREATE TABLE objects (
     PRIMARY KEY(bucket, oid, last_modified),
     CONSTRAINT bucket_id_fk FOREIGN KEY (bucket) REFERENCES buckets(name) ON DELETE RESTRICT,
     CONSTRAINT blob_id_fk FOREIGN KEY (blob) REFERENCES blobs(id) ON DELETE RESTRICT
-);
+)
+PARTITION BY LIST (bucket);
 
 CREATE TABLE temp_blobs (
     blob_id uuid PRIMARY KEY,

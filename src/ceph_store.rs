@@ -190,13 +190,16 @@ impl futures::Stream for RadosReader {
     type Item = Result<bytes::Bytes, s3s::S3Error>;
 
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-        let next_read = std::cmp::min(self.offset + self.length - self.cursur, STRIPE_SIZE as u64);
-        if next_read == 0 {
+        let next_read_size = std::cmp::min(self.offset + self.length - self.cursur, STRIPE_SIZE as u64);
+        if next_read_size == 0 {
             return std::task::Poll::Ready(None);
         }
 
-        let v = vec![0; 10];
-        let b = bytes::Bytes::copy_from_slice(&v);
+        let striper = self.rados_striper.lock().expect("unable to lock mutex");
+        let mut b = vec![0; next_read_size as usize];
+        striper.inner.rados_object_read(&self.name, &mut b, self.cursur).unwrap();
+        drop(striper);
+        let b = bytes::Bytes::from(b);
         self.cursur = self.cursur + b.len() as u64;
         std::task::Poll::Ready(Some(Ok(b)))
     }

@@ -69,7 +69,7 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
         bucket: &str,
         object: &str,
         version: &Option<s3s::dto::ObjectVersionId>,
-    ) -> Result<(), MetaStoreError>;
+    ) -> Result<(), s3s::S3Error>;
 
     /// Writes blob metadata to the temp storage. This is a first stage of the two-phase-commit
     /// 2PC allow to clean data from the storage if an error occures.
