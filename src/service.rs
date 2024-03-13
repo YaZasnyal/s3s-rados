@@ -177,66 +177,40 @@ impl S3 for RadosStore {
         Ok(S3Response::new(output))
     }
 
+    async fn list_object_versions(
+        &self,
+        req: S3Request<ListObjectVersionsInput>,
+    ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
+        // let v2_resp = self.list_objects_v2(req.map_input(Into::into)).await?;
+        
+        // Ok(v2_resp.map_output(|v2| ListObjectVersionsOutput {
+        //     versions: v2.contents,
+        //     delete_markers: Some(s3s::dto::DeleteMarkers::default()),
+        //     common_prefixes: v2.common_prefixes,
+        //     delimiter: v2.delimiter,
+        //     encoding_type: v2.encoding_type,
+        //     name: v2.name,
+        //     prefix: v2.prefix,
+        //     max_keys: v2.max_keys,
+        //     ..Default::default()
+        // }))
+        todo!()
+    }
+
     #[tracing::instrument(level = "debug")]
     async fn list_objects(&self, req: S3Request<ListObjectsInput>) -> S3Result<S3Response<ListObjectsOutput>> {
-        let list_result = self
-            .db
-            .list_objects(ListOptions {
-                bucket: &req.input.bucket,
-                prefix: Some(""),
-                delim: "/",
-                marker: None,
-                max_keys: 1000,
-                with_versions: false,
-                version_marker: None,
-            })
-            .await?;
+        let v2_resp = self.list_objects_v2(req.map_input(Into::into)).await?;
 
-        let ListResult {
-            objects,
-            common_prefixes,
-            marker,
-            version_marker,
-        } = list_result;
-
-        let objects = objects
-            .into_iter()
-            .map(|(o, b)| s3s::dto::Object {
-                checksum_algorithm: None,
-                e_tag: if let Some(b) = &b { Some(b.etag.clone()) } else { None },
-                key: Some(o.oid),
-                last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
-                    o.last_modified.date(),
-                    o.last_modified.time(),
-                    time::UtcOffset::UTC,
-                ))),
-                owner: None,
-                restore_status: None,
-                size: if let Some(b) = &b { b.size } else { 0 },
-                storage_class: None,
-            })
-            .collect();
-
-        let common_prefixes = common_prefixes
-            .into_iter()
-            .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
-            .collect();
-
-        let output = s3s::dto::ListObjectsOutput {
-            common_prefixes: Some(common_prefixes),
-            contents: Some(objects),
-            delimiter: None,
-            encoding_type: None,
-            is_truncated: false, // TODO handle truncated
-            marker: None,
-            max_keys: 1000,
-            name: None,
-            next_marker: version_marker,
-            prefix: None,
-            request_charged: None,
-        };
-
-        Ok(S3Response::new(output))
+        Ok(v2_resp.map_output(|v2| ListObjectsOutput {
+            contents: v2.contents,
+            common_prefixes: v2.common_prefixes,
+            delimiter: v2.delimiter,
+            encoding_type: v2.encoding_type,
+            name: v2.name,
+            prefix: v2.prefix,
+            max_keys: v2.max_keys,
+            ..Default::default()
+        }))
     }
 
     #[tracing::instrument(level = "debug")]
@@ -245,8 +219,8 @@ impl S3 for RadosStore {
             .db
             .list_objects(ListOptions {
                 bucket: &req.input.bucket,
-                prefix: Some(""),
-                delim: "/",
+                prefix: &req.input.prefix,
+                delim: &req.input.delimiter.as_ref().map_or("/", |v| &v),
                 marker: None,
                 max_keys: 1000,
                 with_versions: false,
@@ -296,7 +270,7 @@ impl S3 for RadosStore {
             prefix: None,
             request_charged: None,
             continuation_token: None,
-            next_continuation_token: todo!(),
+            next_continuation_token: None,
             start_after: None,
         };
 

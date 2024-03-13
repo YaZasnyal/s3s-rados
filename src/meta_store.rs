@@ -199,26 +199,12 @@ pub struct Blob {
 #[derive(Debug)]
 pub struct ListOptions<'a> {
     pub bucket: &'a str,
-    pub prefix: Option<&'a str>,
+    pub prefix: &'a Option<String>,
     pub delim: &'a str,
     pub marker: Option<&'a str>,
     pub max_keys: u64,
     pub with_versions: bool,
     pub version_marker: Option<&'a str>,
-}
-
-impl<'a> Default for ListOptions<'a> {
-    fn default() -> Self {
-        Self {
-            bucket: Default::default(),
-            prefix: Default::default(),
-            delim: "/",
-            marker: Default::default(),
-            max_keys: 1000,
-            with_versions: false,
-            version_marker: Default::default(),
-        }
-    }
 }
 
 pub struct ListResult {

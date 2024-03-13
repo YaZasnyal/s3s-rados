@@ -406,8 +406,8 @@ impl MetaStore for PostgresDatabase {
     async fn list_objects<'a>(&self, options: ListOptions<'a>) -> Result<ListResult, s3s::S3Error> {
         // TODO: Handle versions
         // TODO: sanitize input
-        let substr_regex = format!("{}#\"%#\"{}%", options.prefix.unwrap_or(""), options.delim);
-        let like_regex = format!("{}%", options.prefix.unwrap_or(""));
+        let substr_regex = format!("#\"%#\"{}%", options.delim);
+        let like_regex = format!("{}%", options.prefix.as_ref().map_or("", |v| &v));
         // if no offset
         let rows = try_!(sqlx::query(r#"
             WITH all_oids AS (SELECT *, SUBSTRING(oid FROM $1 FOR '#') AS dir FROM objects WHERE bucket = $3 AND oid LIKE $2),
