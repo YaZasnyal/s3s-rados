@@ -410,7 +410,7 @@ impl MetaStore for PostgresDatabase {
         let like_regex = format!("{}%", options.prefix.as_ref().map_or("", |v| &v));
         // if no offset
         let rows = try_!(sqlx::query(r#"
-            WITH all_oids AS (SELECT *, SUBSTRING(oid FROM $1 FOR '#') AS dir FROM objects WHERE bucket = $3 AND oid LIKE $2),
+            WITH all_oids AS (SELECT *, SUBSTRING(oid FROM $1 FOR '#') AS dir FROM objects WHERE bucket = $3 AND oid > $5 AND oid LIKE $2),
                  dirs AS (SELECT DISTINCT dir AS oid, CAST(NULL AS UUID) AS blob, TRUE AS is_dir FROM all_oids WHERE dir IS NOT NULL),
                  OIDS_WITH_DIR AS (SELECT *, CASE WHEN DIR IS NULL THEN FALSE WHEN DIR IS NOT NULL THEN TRUE END AS IS_DIR FROM ALL_OIDS),
                  JOINED_OIDS AS (SELECT OID, BLOB, IS_DIR FROM OIDS_WITH_DIR WHERE IS_DIR = FALSE UNION ALL SELECT OID, BLOB, IS_DIR FROM DIRS ORDER BY OID ASC LIMIT $4)
@@ -423,15 +423,18 @@ impl MetaStore for PostgresDatabase {
             .bind(like_regex)
             .bind(options.bucket)
             .bind(options.max_keys as i64)
+            .bind(options.marker.as_ref().map_or("", |v| &v))
             .fetch_all(&self.db_conn)
             .instrument(debug_span!("db_list_objects"))
             .await);
 
         // hanle offset
 
+        let mut count = 0;
         let mut common_prefixes: Vec<String> = Vec::default();
         let mut objetcs: Vec<(Object, Option<Blob>)> = Vec::default();
         rows.into_iter().try_for_each(|r| {
+            count = count + 1;
             let name: String = try_!(r.try_get("oid"));
             let is_dir: bool = try_!(r.try_get("is_dir"));
             if is_dir {
@@ -465,10 +468,16 @@ impl MetaStore for PostgresDatabase {
             return Ok(());
         })?;
 
+        let marker = if let Some(l) = objetcs.last() {
+            Some(l.0.oid.clone())
+        } else {
+            None
+        };
+
         Ok(ListResult {
             objects: objetcs,
             common_prefixes: common_prefixes,
-            marker: None,
+            marker: if count >= options.max_keys { marker } else { None },
             version_marker: None,
         })
     }

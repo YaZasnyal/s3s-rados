@@ -209,6 +209,8 @@ impl S3 for RadosStore {
             name: v2.name,
             prefix: v2.prefix,
             max_keys: v2.max_keys,
+            is_truncated: v2.is_truncated,
+            next_marker: v2.continuation_token,
             ..Default::default()
         }))
     }
@@ -221,7 +223,7 @@ impl S3 for RadosStore {
                 bucket: &req.input.bucket,
                 prefix: &req.input.prefix,
                 delim: &req.input.delimiter.as_ref().map_or("/", |v| &v),
-                marker: None,
+                marker: &req.input.start_after,
                 max_keys: 1000,
                 with_versions: false,
                 version_marker: None,
@@ -262,15 +264,15 @@ impl S3 for RadosStore {
             common_prefixes: Some(common_prefixes),
             key_count: objects.len() as i32,
             contents: Some(objects),
-            delimiter: None,
+            delimiter: req.input.delimiter,
             encoding_type: None,
-            is_truncated: false,
+            is_truncated: marker.is_some(),
             max_keys: 1000,
-            name: None,
-            prefix: None,
+            name: Some(req.input.bucket),
+            prefix: req.input.prefix,
             request_charged: None,
-            continuation_token: None,
-            next_continuation_token: None,
+            continuation_token: req.input.continuation_token,
+            next_continuation_token: marker,
             start_after: None,
         };
 

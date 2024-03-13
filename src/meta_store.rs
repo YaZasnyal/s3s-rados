@@ -201,7 +201,7 @@ pub struct ListOptions<'a> {
     pub bucket: &'a str,
     pub prefix: &'a Option<String>,
     pub delim: &'a str,
-    pub marker: Option<&'a str>,
+    pub marker: &'a Option<String>,
     pub max_keys: u64,
     pub with_versions: bool,
     pub version_marker: Option<&'a str>,
