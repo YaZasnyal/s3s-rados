@@ -34,15 +34,9 @@ pub enum MetaStoreError {
 #[async_trait::async_trait]
 pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
     /// Write complete object metadata and commit temporary blob
-    /// 
+    ///
     /// TODO: Handle versioned
-    async fn write_object_metadata_with_blob(
-        &self,
-        bucket: &Bucket,
-        object: &Object,
-        blob: &Blob,
-    ) -> Result<(), s3s::S3Error>;
-
+    async fn write_object_metadata_with_blob(&self, bucket: &Bucket, object: &Object, blob: &Blob) -> Result<(), s3s::S3Error>;
 
     async fn write_object_metadata(
         &self,
@@ -80,8 +74,8 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
     /// Remove commited blob asynchronously
     async fn add_blob_gc(&self, blob: &Blob) -> Result<User, s3s::S3Error>;
 
-
     // list objects (with prefix)
+    async fn list_objects<'a>(&self, options: ListOptions<'a>) -> Result<ListResult, S3Error>;
 
     async fn create_bucket(&self, owner: &str, bucket: &str) -> Result<Bucket, S3Error>;
     async fn delete_bucket(&self, bucket: &str) -> Result<(), S3Error>;
@@ -179,7 +173,6 @@ pub struct Object {
     pub blob_id: Option<Uuid>,
 
     pub metadata: Option<s3s::dto::Metadata>,
-    
     // retain_untill
     // legal_hold
 }
@@ -196,9 +189,41 @@ pub struct Blob {
     pub upload_timestamp: Timestamp,
     //storage_class: String,
     /// MD5 or MD5 of all the parts
-    /// 
+    ///
     /// TODO: select better database type
     pub etag: String,
     // pub checksum_algorithm: Option<String>,
     // pub checksum: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ListOptions<'a> {
+    pub bucket: &'a str,
+    pub prefix: Option<&'a str>,
+    pub delim: &'a str,
+    pub marker: Option<&'a str>,
+    pub max_keys: u64,
+    pub with_versions: bool,
+    pub version_marker: Option<&'a str>,
+}
+
+impl<'a> Default for ListOptions<'a> {
+    fn default() -> Self {
+        Self {
+            bucket: Default::default(),
+            prefix: Default::default(),
+            delim: "/",
+            marker: Default::default(),
+            max_keys: 1000,
+            with_versions: false,
+            version_marker: Default::default(),
+        }
+    }
+}
+
+pub struct ListResult {
+    pub objects: Vec<(Object, Option<Blob>)>,
+    pub common_prefixes: Vec<String>,
+    pub marker: Option<String>,
+    pub version_marker: Option<String>,
 }

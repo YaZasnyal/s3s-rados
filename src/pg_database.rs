@@ -4,8 +4,8 @@ use sqlx::pool::PoolConnection;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
-use crate::meta_store::User;
 use crate::meta_store::{Blob, Bucket, MetaStore, MetaStoreError, Object, Transaction, TransactionError};
+use crate::meta_store::{ListOptions, ListResult, User};
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 use sqlx::{Connection, PgConnection, Postgres};
@@ -294,17 +294,17 @@ impl MetaStore for PostgresDatabase {
             .await;
         try_!(res);
 
-        // create partition
-        try_!(
-            // does not want to bind table name for some reason
-            sqlx::query(&format!(
-                "CREATE TABLE {} PARTITION OF objects FOR VALUES IN ( '{}' );",
-                format!("objects_bucket_{}", bucket.replace("-", "_")), bucket
-            ))
-            .execute(&mut *tx)
-            .instrument("db_create_table_partition")
-            .await
-        );
+        // TODO: create partition
+        // try_!(
+        //     // does not want to bind table name for some reason
+        //     sqlx::query(&format!(
+        //         "CREATE TABLE {} PARTITION OF objects FOR VALUES IN ( '{}' );",
+        //         format!("objects_bucket_{}", bucket.replace("-", "_")), bucket
+        //     ))
+        //     .execute(&mut *tx)
+        //     .instrument(debug_span!("db_create_table_partition"))
+        //     .await
+        // );
 
         // fetch the result
         let res = sqlx::query("SELECT name, user_id, creation_date FROM buckets WHERE name = $1;")
@@ -400,6 +400,77 @@ impl MetaStore for PostgresDatabase {
                 id
             })
             .collect())
+    }
+
+    #[tracing::instrument(level = "debug")]
+    async fn list_objects<'a>(&self, options: ListOptions<'a>) -> Result<ListResult, s3s::S3Error> {
+        // TODO: Handle versions
+        // TODO: sanitize input
+        let substr_regex = format!("{}#\"%#\"{}%", options.prefix.unwrap_or(""), options.delim);
+        let like_regex = format!("{}%", options.prefix.unwrap_or(""));
+        // if no offset
+        let rows = try_!(sqlx::query(r#"
+            WITH all_oids AS (SELECT *, SUBSTRING(oid FROM $1 FOR '#') AS dir FROM objects WHERE bucket = $3 AND oid LIKE $2),
+                 dirs AS (SELECT DISTINCT dir AS oid, CAST(NULL AS UUID) AS blob, TRUE AS is_dir FROM all_oids WHERE dir IS NOT NULL),
+                 OIDS_WITH_DIR AS (SELECT *, CASE WHEN DIR IS NULL THEN FALSE WHEN DIR IS NOT NULL THEN TRUE END AS IS_DIR FROM ALL_OIDS),
+                 JOINED_OIDS AS (SELECT OID, BLOB, IS_DIR FROM OIDS_WITH_DIR WHERE IS_DIR = FALSE UNION ALL SELECT OID, BLOB, IS_DIR FROM DIRS ORDER BY OID ASC LIMIT $4)
+
+                 SELECT JOINED_OIDS.oid, JOINED_OIDS.is_dir, JOINED_OIDS.blob, ALL_OIDS.last_modified, blobs.size, blobs.parts, blobs.part_size, blobs.uploaded_at, blobs.etag FROM JOINED_OIDS 
+	                LEFT JOIN ALL_OIDS ON JOINED_OIDS.oid = ALL_OIDS.oid
+	                LEFT JOIN blobs ON JOINED_OIDS.blob = blobs.id
+            "#)
+            .bind(substr_regex)
+            .bind(like_regex)
+            .bind(options.bucket)
+            .bind(options.max_keys as i64)
+            .fetch_all(&self.db_conn)
+            .instrument(debug_span!("db_list_objects"))
+            .await);
+
+        // hanle offset
+
+        let mut common_prefixes: Vec<String> = Vec::default();
+        let mut objetcs: Vec<(Object, Option<Blob>)> = Vec::default();
+        rows.into_iter().try_for_each(|r| {
+            let name: String = try_!(r.try_get("oid"));
+            let is_dir: bool = try_!(r.try_get("is_dir"));
+            if is_dir {
+                common_prefixes.push(name);
+                return Ok(());
+            }
+
+            let obj = Object {
+                bucket_name: options.bucket.to_owned(),
+                oid: name.to_owned(),
+                version_id: None, // TODO handle version
+                last_modified: try_!(r.try_get("last_modified")),
+                blob_id: try_!(r.try_get("blob")),
+                metadata: None, // TODO: handle metadata
+            };
+
+            let blob = if obj.blob_id.is_some() {
+                Some(Blob {
+                    id: obj.blob_id.clone().unwrap(),
+                    size: try_!(r.try_get("size")),
+                    parts: try_!(r.try_get("parts")),
+                    part_size: try_!(r.try_get("part_size")),
+                    upload_timestamp: try_!(r.try_get("uploaded_at")),
+                    etag: try_!(r.try_get("etag")),
+                })
+            } else {
+                None
+            };
+
+            objetcs.push((obj, blob));
+            return Ok(());
+        })?;
+
+        Ok(ListResult {
+            objects: objetcs,
+            common_prefixes: common_prefixes,
+            marker: None,
+            version_marker: None,
+        })
     }
 }
 

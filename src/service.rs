@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::blob_store::BlobStore;
 use crate::ceph_store::RadosBlobStore;
-use crate::meta_store::{Blob, MetaStore};
+use crate::meta_store::{Blob, ListOptions, ListResult, MetaStore};
 use crate::pg_database::PostgresDatabase;
 
 #[derive(Debug)]
@@ -179,12 +179,128 @@ impl S3 for RadosStore {
 
     #[tracing::instrument(level = "debug")]
     async fn list_objects(&self, req: S3Request<ListObjectsInput>) -> S3Result<S3Response<ListObjectsOutput>> {
-        Err(s3_error!(NotImplemented, "ListObjects is not implemented yet"))
+        let list_result = self
+            .db
+            .list_objects(ListOptions {
+                bucket: &req.input.bucket,
+                prefix: Some(""),
+                delim: "/",
+                marker: None,
+                max_keys: 1000,
+                with_versions: false,
+                version_marker: None,
+            })
+            .await?;
+
+        let ListResult {
+            objects,
+            common_prefixes,
+            marker,
+            version_marker,
+        } = list_result;
+
+        let objects = objects
+            .into_iter()
+            .map(|(o, b)| s3s::dto::Object {
+                checksum_algorithm: None,
+                e_tag: if let Some(b) = &b { Some(b.etag.clone()) } else { None },
+                key: Some(o.oid),
+                last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
+                    o.last_modified.date(),
+                    o.last_modified.time(),
+                    time::UtcOffset::UTC,
+                ))),
+                owner: None,
+                restore_status: None,
+                size: if let Some(b) = &b { b.size } else { 0 },
+                storage_class: None,
+            })
+            .collect();
+
+        let common_prefixes = common_prefixes
+            .into_iter()
+            .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
+            .collect();
+
+        let output = s3s::dto::ListObjectsOutput {
+            common_prefixes: Some(common_prefixes),
+            contents: Some(objects),
+            delimiter: None,
+            encoding_type: None,
+            is_truncated: false, // TODO handle truncated
+            marker: None,
+            max_keys: 1000,
+            name: None,
+            next_marker: version_marker,
+            prefix: None,
+            request_charged: None,
+        };
+
+        Ok(S3Response::new(output))
     }
 
     #[tracing::instrument(level = "debug")]
     async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
-        Err(s3_error!(NotImplemented, "ListObjectsV2 is not implemented yet"))
+        let list_result = self
+            .db
+            .list_objects(ListOptions {
+                bucket: &req.input.bucket,
+                prefix: Some(""),
+                delim: "/",
+                marker: None,
+                max_keys: 1000,
+                with_versions: false,
+                version_marker: None,
+            })
+            .await?;
+
+        let ListResult {
+            objects,
+            common_prefixes,
+            marker,
+            version_marker,
+        } = list_result;
+
+        let objects: Vec<s3s::dto::Object> = objects
+            .into_iter()
+            .map(|(o, b)| s3s::dto::Object {
+                checksum_algorithm: None,
+                e_tag: if let Some(b) = &b { Some(b.etag.clone()) } else { None },
+                key: Some(o.oid),
+                last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
+                    o.last_modified.date(),
+                    o.last_modified.time(),
+                    time::UtcOffset::UTC,
+                ))),
+                owner: None,
+                restore_status: None,
+                size: if let Some(b) = &b { b.size } else { 0 },
+                storage_class: None,
+            })
+            .collect();
+
+        let common_prefixes = common_prefixes
+            .into_iter()
+            .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
+            .collect();
+
+        let output = s3s::dto::ListObjectsV2Output {
+            common_prefixes: Some(common_prefixes),
+            key_count: objects.len() as i32,
+            contents: Some(objects),
+            delimiter: None,
+            encoding_type: None,
+            is_truncated: false,
+            max_keys: 1000,
+            name: None,
+            prefix: None,
+            request_charged: None,
+            continuation_token: None,
+            next_continuation_token: todo!(),
+            start_after: None,
+        };
+
+        Ok(S3Response::new(output))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -211,12 +327,13 @@ impl S3 for RadosStore {
             bucket,
             key,
             metadata,
+            tagging,
             content_length,
             content_md5,
             ..
         } = input;
         // let Some(content_md5) = content_md5 else  {
-        //     return Err(s3_error!(InvalidArgument, "No MD5 hash provided")); // TODO: should not be an error
+        //     return Err(s3_error!(InvalidArgument, "No MD5 hash provided"));
         // };
         let Some(content_length) = content_length else {
             return Err(s3_error!(InvalidArgument, "content_length not provided"));
