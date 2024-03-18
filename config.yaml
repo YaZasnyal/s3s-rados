@@ -1,0 +1,56 @@
+metadata:
+  host: localhost
+  port: 5433
+  database: s3srados
+  user: yugabyte
+  password: yugabyte
+
+regions:
+  - minio:
+    - storage_classes:
+      - standard:
+        type: s3
+        backends:
+          - url: https://s3.example.com
+            access_key: qwe
+            secret_key: asd
+            client_options:
+              stream_signature: false
+            weight: 0.5
+          # - url: https://s3-2.example.com
+          #   ...
+      # - replicated:
+      #   type: s3
+      #   backends:
+      #     - ...
+  # - cloud:
+  #   - storage_classes:
+  #     - standard:
+  #       type: cloud-s3 # blobs are grouped into several buckets
+  #       url: https://s3.aws.com
+  #       buckets:
+  #         - name: shard1
+  #           weight: 0.5
+  #         - name: shard2
+  #           weight: 0.5
+
+# fallback s3 for buckets that are not managed by this service
+proxy:
+  url: https://s3.example.com
+  access_key: qwe
+  secret_key: asd
+  client_options:
+    stream_signature: false
+
+admin:
+  port: 9999
+
+logging:
+  level: info
+
+tracing:
+  level: debug
+  sampling: 0.1
+  oltp_endpoint: http://localhost:4317
+
+metrics:

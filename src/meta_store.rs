@@ -3,6 +3,7 @@ use s3s::{
     dto::{ChecksumSHA1, ChecksumSHA256},
     S3Error,
 };
+use time::Time;
 use std::result::Result;
 use uuid::Uuid;
 
@@ -94,12 +95,15 @@ pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
 pub type AccountId = s3s::dto::AccountId;
 pub type Timestamp = time::PrimitiveDateTime;
 
+#[derive(Debug)]
 pub struct User {
     pub id: AccountId,
     pub name: String,
     pub email: String,
+    pub creation_date: Timestamp,
 }
 
+#[derive(Debug)]
 pub struct Key {
     pub access_key: String,
     pub secret_key: String,
@@ -107,10 +111,12 @@ pub struct Key {
     // key policy (read, write)
 }
 
+#[derive(Debug)]
 pub struct Bucket {
     pub name: String,
     pub owner: AccountId,
     pub creation_date: Timestamp,
+    pub location: BlobLocation,
     //versioning: bool,
     // lc policy
     // notification policy
@@ -163,34 +169,43 @@ pub struct Bucket {
 //  -> part_size: u32,
 //  -> storage_class
 
+#[derive(Debug)]
 pub struct Object {
     pub bucket_name: String,
     pub oid: String,
-    pub version_id: Option<String>,
+    // pub version_id: Option<String>,
     pub last_modified: Timestamp,
 
     /// Unique indentifier of the blob (acts as etag)
     pub blob_id: Option<Uuid>,
 
-    pub metadata: Option<s3s::dto::Metadata>,
+    // pub metadata: Option<s3s::dto::Metadata>,
     // retain_untill
     // legal_hold
 }
 
+#[derive(Debug, Clone, sqlx::Type)]
+#[sqlx(type_name = "blob_location")]
+pub struct BlobLocation {
+    pub region: String,
+    pub backend: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Blob {
-    pub id: Uuid,
-    /// total size of the blob
-    pub size: i64,
-    /// number of parts for multipart blobs
-    pub parts: Option<i32>,
-    /// size of a single part (excluding the last one)
-    pub part_size: Option<i64>,
+    pub id: String,
+    // total size of the blob
+    // pub size: i64,
+    // number of parts for multipart blobs
+    // pub parts: Option<i32>,
+    // size of a single part (excluding the last one)
+    // pub part_size: Option<i64>,
     pub upload_timestamp: Timestamp,
     //storage_class: String,
-    /// MD5 or MD5 of all the parts
-    ///
-    /// TODO: select better database type
+    placament: BlobLocation,
+    // MD5 or MD5 of all the parts
+    //
+    // TODO: select better database type
     pub etag: String,
     // pub checksum_algorithm: Option<String>,
     // pub checksum: Option<String>,

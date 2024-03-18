@@ -6,9 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ceph = {version = "3.2.5", features = ["rados_striper"] }
+ceph = { version = "3.2.5", features = ["rados_striper"] }
 clap = { version = "4.5.2", features = ["derive"] }
-s3s = "0.8.1"
+s3s = "0.9.0"
+s3s-aws = "0.9.0"
+#s3s = { path = "../s3s/crates/s3s" }
 hyper = { version = "0.14.27", features = ["http1", "http2", "server", "stream", "runtime"] }
 tokio = { version = "1.36.0", features = ["full", "fs", "io-util"] }
 async-trait = "0.1.77"
@@ -16,6 +18,13 @@ sqlx = {version = "0.7.3", features = ["sqlite", "postgres", "runtime-tokio-rust
 uuid = { version = "1.7.0", features = ["v4", "fast-rng"] }
 thiserror = "1.0.57"
 chrono = "0.4.35"
+aws-config = "1.1.8"
+aws-sdk-s3 = "1.19.1"
+aws-types = "1.1.8"
+bytes = "1.5.0"
+hex-simd = "0.8.0"
+anyhow = "1.0.80"
+futures-core = "0.3.30"
 
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "time", "tracing-log"] }
@@ -28,9 +37,4 @@ opentelemetry-otlp = {version = "0.15.0", features = ["grpc-tonic"]}
 tonic = "0.11.0"
 time = "0.3.34"
 futures = "0.3.30"
-bytes = "1.5.0"
 md-5 = "0.10.6"
-hex-simd = "0.8.0"
-memoize = "0.4.2"
-anyhow = "1.0.80"
-futures-core = "0.3.30"
