@@ -1,10 +1,11 @@
 use std::fmt::Debug;
 
+use s3s::dto::Timestamp;
 use sqlx::pool::PoolConnection;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
-use crate::meta_store::{Blob, BlobLocation, Bucket, MetaStore, MetaStoreError, Object, Transaction, TransactionError};
+use crate::meta_store::{self, Blob, BlobLocation, Bucket, MetaStore, MetaStoreError, Object, Transaction, TransactionError};
 use crate::meta_store::{ListOptions, ListResult, User};
 use sqlx::postgres::PgPool;
 use sqlx::Row;
@@ -68,6 +69,7 @@ impl Debug for PostgresDatabase {
 }
 
 impl PostgresDatabase {
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_user_by_access_key(&self, key: &str) -> Result<User, s3s::S3Error> {
         let res = sqlx::query("SELECT users.* from keys JOIN users ON keys.user_id = users.id WHERE keys.access_key = $1")
             .bind(key)
@@ -85,6 +87,7 @@ impl PostgresDatabase {
         })
     }
 
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_bucket(&self, name: &str) -> Result<Option<Bucket>, s3s::S3Error> {
         let row = try_!(
             sqlx::query("SELECT name, user_id, creation_date, location FROM buckets WHERE name = $1")
@@ -101,10 +104,11 @@ impl PostgresDatabase {
             name: try_!(row.try_get("name")),
             owner: try_!(row.try_get("user_id")),
             creation_date: try_!(row.try_get("creation_date")),
-            location: try_!(row.try_get("location"))
+            location: try_!(row.try_get("location")),
         }))
     }
 
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn create_bucket_temp(&self, name: &str, region: &BlobLocation) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("INSERT INTO buckets_temp (name, location, creation_date) VALUES ($1, ($2, $3)::blob_location, CURRENT_TIMESTAMP)")
@@ -117,6 +121,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_bucket_temp(&self, name: &str) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("DELETE FROM buckets_temp WHERE name = $1")
@@ -127,6 +132,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn commit_bucket(&self, name: &str, user: &User, region: &BlobLocation) -> Result<(), s3s::S3Error> {
         let mut tx = try_!(self.db_conn.begin().await);
         try_!(
@@ -144,21 +150,86 @@ impl PostgresDatabase {
                 .execute(&mut *tx)
                 .await
         );
+        // TODO: create partition
+        try_!(
+            // does not want to bind table name for some reason
+            sqlx::query(&format!(
+                "CREATE TABLE {} PARTITION OF objects FOR VALUES IN ( '{}' );",
+                format!("objects_bucket_{}", name.replace("-", "_")),
+                name
+            ))
+            .execute(&mut *tx)
+            .instrument(debug_span!("db_create_table_partition"))
+            .await
+        );
 
         try_!(tx.commit().await);
         Ok(())
     }
 
-    pub async fn create_blob_temp(&self, id: &Uuid) -> Result<(), s3s::S3Error> {
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn create_blob_temp(&self, id: &Uuid, location: &BlobLocation) -> Result<(), s3s::S3Error> {
+        try_!(
+            sqlx::query(
+                "INSERT INTO temp_blobs (id, uploaded_at, location) VALUES($1, CURRENT_TIMESTAMP, ($2, $3)::blob_location)"
+            )
+            .bind(id)
+            .bind(&location.region)
+            .bind(&location.backend)
+            .execute(&self.db_conn)
+            .await
+        );
         Ok(())
     }
 
+    /// the object has never been bushed to the backing store
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_blob_temp(&self, id: &Uuid) -> Result<(), s3s::S3Error> {
+        try_!(
+            sqlx::query("DELETE FROM temp_blobs WHERE id = $1")
+                .bind(id)
+                .execute(&self.db_conn)
+                .await
+        );
         Ok(())
     }
 
-    pub async fn commit_object(&self, object: &Object, blob: &Blob) -> Result<(), s3s::S3Error> {
-        todo!()
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn commit_object(&self, object: &Object, blob: &Blob) -> Result<meta_store::Timestamp, s3s::S3Error> {
+        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
+        try_!(
+            sqlx::query("INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)")
+                .bind(&blob.id)
+                .bind(&blob.placament.region)
+                .bind(&blob.placament.backend)
+                .bind(&blob.etag)
+                .bind(blob.size)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_insert_blob"))
+                .await
+        );
+
+        let timestamp = try_!(
+            sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES($1, $2, CURRENT_TIMESTAMP, $3) RETURNING last_modified")
+                .bind(&object.bucket_name)
+                .bind(&object.oid)
+                .bind(&blob.id)
+                .fetch_one(&mut *tx)
+                .instrument(debug_span!("db_insert_object"))
+                .await
+        );
+        let timestamp: meta_store::Timestamp = try_!(timestamp.try_get("last_modified"));
+
+        try_!(
+            sqlx::query("DELETE FROM temp_blobs WHERE id = $1")
+                .bind(&blob.id)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_delete_temp_blob"))
+                .await
+        );
+
+        try_!(tx.commit().instrument(debug_span!("db_commit_transaction")).await);
+        Ok(timestamp)
     }
 }
 

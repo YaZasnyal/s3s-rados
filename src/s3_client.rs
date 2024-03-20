@@ -21,11 +21,12 @@ impl Debug for S3Client {
 impl S3Client {
     pub async fn new() -> Self {
         let key_id = "qwe".to_owned(); //dotenv_codegen::dotenv!("MINIO_ACCESS_KEY_ID").to_string();
-        let secret_key = "asd".to_owned(); //dotenv_codegen::dotenv!("MINIO_SECRET_ACCESS_KEY").to_string();
+        let secret_key = "asdfghjkl".to_owned(); //dotenv_codegen::dotenv!("MINIO_SECRET_ACCESS_KEY").to_string();
 
         let cred = Credentials::new(key_id, secret_key, None, None, "loaded-from-custom-env");
 
         let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        // let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::v2023_11_09())
             .endpoint_url(url)

@@ -193,21 +193,21 @@ pub struct BlobLocation {
 
 #[derive(Debug, Clone)]
 pub struct Blob {
-    pub id: String,
+    pub id: Uuid,
     // total size of the blob
-    // pub size: i64,
+    pub size: i64,
     // number of parts for multipart blobs
     // pub parts: Option<i32>,
     // size of a single part (excluding the last one)
     // pub part_size: Option<i64>,
     pub upload_timestamp: Timestamp,
     //storage_class: String,
-    placament: BlobLocation,
+    pub placament: BlobLocation,
     // MD5 or MD5 of all the parts
     //
     // TODO: select better database type
     pub etag: String,
-    // pub checksum_algorithm: Option<String>,
+    pub checksum_algorithm: Option<s3s::dto::ChecksumAlgorithm>,
     // pub checksum: Option<String>,
 }
 

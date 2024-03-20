@@ -62,7 +62,7 @@ struct Opt {
     otlp_endpoint: Option<String>,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::parse();
     setup_tracing(&opt).unwrap();
