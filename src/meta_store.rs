@@ -200,15 +200,25 @@ pub struct Blob {
     // pub parts: Option<i32>,
     // size of a single part (excluding the last one)
     // pub part_size: Option<i64>,
-    pub upload_timestamp: Timestamp,
+    // pub upload_timestamp: Timestamp,
     //storage_class: String,
-    pub placament: BlobLocation,
+    pub placement: BlobLocation,
     // MD5 or MD5 of all the parts
     //
     // TODO: select better database type
     pub etag: String,
-    pub checksum_algorithm: Option<s3s::dto::ChecksumAlgorithm>,
+    // pub checksum_algorithm: Option<s3s::dto::ChecksumAlgorithm>,
     // pub checksum: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MultipartUpload {
+    pub bucket: String,
+    pub oid: String,
+    pub upload_id: String,
+    pub blob_id: Uuid,
+    pub uploaded_at: Timestamp,
+    pub location: BlobLocation,
 }
 
 #[derive(Debug)]

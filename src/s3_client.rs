@@ -25,8 +25,8 @@ impl S3Client {
 
         let cred = Credentials::new(key_id, secret_key, None, None, "loaded-from-custom-env");
 
-        let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
-        // let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        // let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::v2023_11_09())
             .endpoint_url(url)
@@ -73,9 +73,63 @@ impl S3Client {
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    pub async fn put_object(&self, req: s3s::dto::builders::PutObjectInputBuilder, region: &meta_store::BlobLocation) -> S3Result<S3Response<s3s::dto::PutObjectOutput>> {
+    pub async fn put_object(
+        &self,
+        req: s3s::dto::builders::PutObjectInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::PutObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
         self.proxy.put_object(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn get_object(
+        &self,
+        req: s3s::dto::builders::GetObjectInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::GetObjectOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.get_object(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn head_object(
+        &self,
+        req: s3s::dto::builders::HeadObjectInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::HeadObjectOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.head_object(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn create_multipart_upload(
+        &self,
+        req: s3s::dto::builders::CreateMultipartUploadInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::CreateMultipartUploadOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.create_multipart_upload(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn complete_multipart_upload(
+        &self,
+        req: s3s::dto::builders::CompleteMultipartUploadInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::CompleteMultipartUploadOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.complete_multipart_upload(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn upload_part(
+        &self,
+        req: s3s::dto::builders::UploadPartInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::UploadPartOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.upload_part(s3s::S3Request::new(req)).await
     }
 }
 

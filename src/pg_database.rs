@@ -5,7 +5,9 @@ use sqlx::pool::PoolConnection;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
-use crate::meta_store::{self, Blob, BlobLocation, Bucket, MetaStore, MetaStoreError, Object, Transaction, TransactionError};
+use crate::meta_store::{
+    self, Blob, BlobLocation, Bucket, MetaStore, MetaStoreError, MultipartUpload, Object, Transaction, TransactionError,
+};
 use crate::meta_store::{ListOptions, ListResult, User};
 use sqlx::postgres::PgPool;
 use sqlx::Row;
@@ -167,6 +169,26 @@ impl PostgresDatabase {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn list_buckets_by_user(&self, user_id: &str) -> Result<Vec<Bucket>, s3s::S3Error> {
+        let res = sqlx::query("SELECT * FROM buckets WHERE user_id = $1 ORDER BY NAME ASC")
+            .bind(user_id)
+            .fetch_all(&self.db_conn)
+            .await;
+        let res = try_!(res);
+
+        res.into_iter()
+            .map(|r| {
+                Ok(Bucket {
+                    name: try_!(r.try_get("name")),
+                    owner: try_!(r.try_get("user_id")),
+                    creation_date: try_!(r.try_get("creation_date")),
+                    location: try_!(r.try_get("location")),
+                })
+            })
+            .collect()
+    }
+
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn create_blob_temp(&self, id: &Uuid, location: &BlobLocation) -> Result<(), s3s::S3Error> {
         try_!(
@@ -200,8 +222,8 @@ impl PostgresDatabase {
         try_!(
             sqlx::query("INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)")
                 .bind(&blob.id)
-                .bind(&blob.placament.region)
-                .bind(&blob.placament.backend)
+                .bind(&blob.placement.region)
+                .bind(&blob.placement.backend)
                 .bind(&blob.etag)
                 .bind(blob.size)
                 .execute(&mut *tx)
@@ -230,6 +252,146 @@ impl PostgresDatabase {
 
         try_!(tx.commit().instrument(debug_span!("db_commit_transaction")).await);
         Ok(timestamp)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn get_object(&self, req: &s3s::dto::GetObjectInput) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error> {
+        // TODO: handle version
+        let row = try_!(
+            sqlx::query(
+                r#"SELECT
+                        *
+                    FROM
+                        OBJECTS
+                        LEFT OUTER JOIN BLOBS ON OBJECTS.BLOB = BLOBS.ID
+                    WHERE
+                        OBJECTS.BUCKET = $1
+                        AND OBJECTS.OID = $2
+                    ORDER BY
+                        OBJECTS.LAST_MODIFIED DESC
+                    LIMIT
+                        1"#
+            )
+            .bind(&req.bucket)
+            .bind(&req.key)
+            .fetch_optional(&self.db_conn)
+            .await
+        );
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let object = Object {
+            bucket_name: req.bucket.to_owned(),
+            oid: req.key.to_owned(),
+            last_modified: try_!(row.try_get("last_modified")),
+            blob_id: try_!(row.try_get("blob")),
+        };
+
+        let blob = if object.blob_id.is_some() {
+            Some(Blob {
+                id: try_!(row.try_get("id")),
+                size: try_!(row.try_get("size")),
+                // upload_timestamp: try_!(row.try_get("uploaded_at")),
+                etag: try_!(row.try_get("etag")),
+                placement: try_!(row.try_get("location")),
+            })
+        } else {
+            None
+        };
+
+        Ok(Some((object, blob)))
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn create_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
+        try_!(
+            sqlx::query("INSERT INTO active_multipart_uploads (bucket, oid, upload_id, blob_id, uploaded_at, location) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, ($5, $6)::blob_location)")
+            .bind(&upload.bucket)
+            .bind(&upload.oid)
+            .bind(&upload.upload_id)
+            .bind(&upload.blob_id)
+            .bind(&upload.location.region)
+            .bind(&upload.location.backend)
+            .execute(&self.db_conn)
+            .await
+        );
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn get_multipart(&self, bucket: &str, oid: &str, upload_id: &str) -> Result<Option<MultipartUpload>, s3s::S3Error> {
+        let row = try_!(
+            sqlx::query("SELECT * FROM active_multipart_uploads WHERE bucket = $1 AND oid = $2 AND upload_id = $3")
+                .bind(bucket)
+                .bind(oid)
+                .bind(upload_id)
+                .fetch_optional(&self.db_conn)
+                .await
+        );
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(MultipartUpload {
+            bucket: try_!(row.try_get("bucket")),
+            oid: try_!(row.try_get("oid")),
+            upload_id: try_!(row.try_get("upload_id")),
+            blob_id: try_!(row.try_get("blob_id")),
+            uploaded_at: try_!(row.try_get("uploaded_at")),
+            location: try_!(row.try_get("location")),
+        }))
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn list_multipart(&self, bucket: &str) -> Result<Vec<MultipartUpload>, s3s::S3Error> {
+        todo!()
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn complete_multipart(&self, object: &Object, blob: &Blob, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
+        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
+        try_!(
+            sqlx::query("INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)")
+                .bind(&blob.id)
+                .bind(&blob.placement.region)
+                .bind(&blob.placement.backend)
+                .bind(&blob.etag)
+                .bind(blob.size)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_insert_blob"))
+                .await
+        );
+
+        try_!(
+            sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES($1, $2, CURRENT_TIMESTAMP, $3)")
+                .bind(&object.bucket_name)
+                .bind(&object.oid)
+                .bind(&blob.id)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_insert_object"))
+                .await
+        );
+
+        try_!(
+            sqlx::query("DELETE FROM active_multipart_uploads WHERE bucket = $1 AND oid = $2 AND upload_id = $3")
+                .bind(&upload.bucket)
+                .bind(&upload.oid)
+                .bind(&upload.upload_id)
+                .execute(&mut *tx)
+                .instrument(debug_span!("db_delete_active_multipart"))
+                .await
+        );
+
+        try_!(tx.commit().instrument(debug_span!("db_commit_transaction")).await);
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
+        todo!()
     }
 }
 
@@ -519,25 +681,6 @@ impl PostgresDatabase {
 //             owner: try_!(res.try_get("user_id")),
 //             creation_date: try_!(res.try_get("creation_date")),
 //         }))
-//     }
-
-//     #[tracing::instrument(level = "debug")]
-//     async fn list_buckets_by_user(&self, user_id: &str) -> Result<Vec<Bucket>, s3s::S3Error> {
-//         let res = sqlx::query("SELECT * FROM buckets WHERE user_id = $1 ORDER BY NAME ASC")
-//             .bind(user_id)
-//             .fetch_all(&self.db_conn)
-//             .await;
-//         let res = try_!(res);
-
-//         res.into_iter()
-//             .map(|r| {
-//                 Ok(Bucket {
-//                     name: try_!(r.try_get("name")),
-//                     owner: try_!(r.try_get("user_id")),
-//                     creation_date: try_!(r.try_get("creation_date")),
-//                 })
-//             })
-//             .collect()
 //     }
 
 //     #[tracing::instrument(level = "debug")]

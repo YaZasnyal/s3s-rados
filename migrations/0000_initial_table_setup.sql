@@ -69,6 +69,17 @@ CREATE TABLE blobs_gc (
     location blob_location not null
 );
 
+CREATE TABLE active_multipart_uploads (
+    bucket varchar not null,
+    oid varchar(1024) not null,
+    upload_id varchar UNIQUE not null,
+    blob_id uuid not null,
+    uploaded_at timestamp not null,
+    location blob_location not null,
+
+    PRIMARY KEY(bucket, oid, upload_id)
+);
+
 INSERT INTO users (id, name, email, creation_date) VALUES ('root', 'Root user', 'root@example.org', CURRENT_TIMESTAMP);
 -- TODO: remove
 INSERT INTO keys ("access_key", secret_key, user_id, creation_date) VALUES ('qwe', 'asd', 'root', CURRENT_TIMESTAMP);
