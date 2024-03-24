@@ -1,16 +1,9 @@
-use futures::StreamExt;
-use hyper::body;
-use md5::{Digest, Md5};
 use s3s::dto::*;
 use s3s::{s3_error, S3Request, S3Response, S3Result, S3};
 use time::PrimitiveDateTime;
-use tokio::io::AsyncWriteExt;
-use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
-// use crate::blob_store::BlobStore;
-// use crate::ceph_store::RadosBlobStore;
-use crate::meta_store::{Blob, BlobLocation, ListOptions, ListResult, MetaStore, MultipartUpload, Object};
+use crate::meta_store::{Blob, MultipartUpload, Object};
 use crate::pg_database::PostgresDatabase;
 use crate::s3_client::S3Client;
 
@@ -111,7 +104,7 @@ impl S3 for RadosStore {
         };
 
         let user = self.db.get_user_by_access_key(&creds.access_key).await?;
-        if let Some(bucket) = self.db.get_bucket(&req.input.bucket).await? {
+        if let Some(_bucket) = self.db.get_bucket(&req.input.bucket).await? {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::BucketAlreadyExists));
         }
 
@@ -165,39 +158,17 @@ impl S3 for RadosStore {
 
         let new_blob = Uuid::new_v4();
 
-        let CreateMultipartUploadInput {
-            // acl,
-            // bucket: bucket,
-            // bucket_key_enabled,
-            cache_control,
-            checksum_algorithm,
-            content_disposition,
-            content_encoding,
-            content_language,
-            content_type,
-            // expected_bucket_owner,
-            // expires,
-            key,
-            metadata,
-            // object_lock_legal_hold_status, // TODO: handle locking
-            // object_lock_mode,
-            // object_lock_retain_until_date,
-            // storage_class,
-            tagging,
-            // website_redirect_location,
-            ..
-        } = input;
-
         let upstream_request = s3s::dto::builders::CreateMultipartUploadInputBuilder::default()
-            .cache_control(cache_control)
-            .checksum_algorithm(checksum_algorithm)
-            .content_disposition(content_disposition)
-            .content_encoding(content_encoding)
-            .content_language(content_language)
-            .content_type(content_type)
+            .cache_control(input.cache_control)
+            .checksum_algorithm(input.checksum_algorithm)
+            .content_disposition(input.content_disposition)
+            .content_encoding(input.content_encoding)
+            .content_language(input.content_language)
+            .content_type(input.content_type)
             .key(new_blob.to_string())
-            .metadata(metadata)
-            .tagging(tagging);
+            // TODO: handle object lock
+            .metadata(input.metadata)
+            .tagging(input.tagging);
 
         let CreateMultipartUploadOutput { upload_id, .. } = self
             .blob
@@ -208,7 +179,7 @@ impl S3 for RadosStore {
         self.db
             .create_multipart(&MultipartUpload {
                 bucket: bucket.name.clone(),
-                oid: key.clone(),
+                oid: input.key.clone(),
                 upload_id: upload_id
                     .as_ref()
                     .expect("no upload id returned from the upstream")
@@ -221,7 +192,7 @@ impl S3 for RadosStore {
 
         let output = CreateMultipartUploadOutput {
             bucket: Some(bucket.name.clone()),
-            key: Some(key),
+            key: Some(input.key),
             upload_id,
             ..Default::default()
         };
@@ -229,7 +200,7 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    async fn delete_bucket(&self, req: S3Request<DeleteBucketInput>) -> S3Result<S3Response<DeleteBucketOutput>> {
+    async fn delete_bucket(&self, _req: S3Request<DeleteBucketInput>) -> S3Result<S3Response<DeleteBucketOutput>> {
         todo!()
         // if req.credentials.is_none() {
         //     return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
@@ -246,7 +217,7 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn delete_object(&self, req: S3Request<DeleteObjectInput>) -> S3Result<S3Response<DeleteObjectOutput>> {
+    async fn delete_object(&self, _req: S3Request<DeleteObjectInput>) -> S3Result<S3Response<DeleteObjectOutput>> {
         todo!()
         // // check acl
         // // check bucket lock
@@ -279,111 +250,47 @@ impl S3 for RadosStore {
             return Err(s3_error!(NoSuchKey, "Versioning is not supported yet"));
         };
 
-        let GetObjectInput {
-            // bucket,
-            checksum_mode,
-            // expected_bucket_owner,
-            // if_match,
-            // if_modified_since,
-            // if_none_match,
-            // if_unmodified_since,
-            // key,
-            part_number,
-            range,
-            // request_payer,
-            response_cache_control,
-            response_content_disposition,
-            response_content_encoding,
-            response_content_language,
-            response_content_type,
-            response_expires,
-            // sse_customer_algorithm,
-            // sse_customer_key,
-            // sse_customer_key_md5,
-            // version_id, // TODO: handle versioning
-            ..
-        } = req.input;
-
         let blob_req = s3s::dto::builders::GetObjectInputBuilder::default()
             .key(blob.id.to_string())
-            .checksum_mode(checksum_mode)
-            .part_number(part_number)
-            .range(range)
-            .response_cache_control(response_cache_control)
-            .response_content_disposition(response_content_disposition)
-            .response_content_encoding(response_content_encoding)
-            .response_content_language(response_content_language)
-            .response_content_type(response_content_type)
-            .response_expires(response_expires);
+            .checksum_mode(req.input.checksum_mode)
+            .part_number(req.input.part_number)
+            .range(req.input.range)
+            .response_cache_control(req.input.response_cache_control)
+            .response_content_disposition(req.input.response_content_disposition)
+            .response_content_encoding(req.input.response_content_encoding)
+            .response_content_language(req.input.response_content_language)
+            .response_content_type(req.input.response_content_type)
+            .response_expires(req.input.response_expires);
 
-        let s3s::dto::GetObjectOutput {
-            accept_ranges,
-            body,
-            // bucket_key_enabled,
-            cache_control,
-            checksum_crc32,
-            checksum_crc32c,
-            checksum_sha1,
-            checksum_sha256,
-            content_disposition,
-            content_encoding,
-            content_language,
-            content_length,
-            content_range,
-            content_type,
-            delete_marker,
-            // e_tag,
-            expiration,
-            expires,
-            // last_modified,
-            metadata,
-            missing_meta,
-            // object_lock_legal_hold_status, // TODO: handle locking
-            // object_lock_mode,
-            // object_lock_retain_until_date,
-            parts_count,
-            // replication_status,
-            // request_charged,
-            // restore,
-            // sse_customer_algorithm,
-            // sse_customer_key_md5,
-            // ssekms_key_id,
-            // server_side_encryption,
-            // storage_class,
-            tag_count,
-            // version_id, // TODO: handle versioning
-            // website_redirect_location,
-            ..
-        } = self.blob.get_object(blob_req, &blob.placement).await?.output;
+        let upstream_output = try_!(self.blob.get_object(blob_req, &blob.placement).await).output;
 
-        // let bytes = self.blob.get_reader(&blob.id.to_string(), 0, blob.size as u64).await?;
         let output = GetObjectOutput {
-            accept_ranges,
-            body,
-            cache_control,
-            checksum_crc32,
-            checksum_crc32c,
-            checksum_sha1,
-            checksum_sha256,
-            content_disposition,
-            content_encoding,
-            content_language,
-            content_length,
-            content_range,
-            content_type,
-            delete_marker,
+            accept_ranges: upstream_output.accept_ranges,
+            body: upstream_output.body,
+            cache_control: upstream_output.cache_control,
+            checksum_crc32: upstream_output.checksum_crc32,
+            checksum_crc32c: upstream_output.checksum_crc32c,
+            checksum_sha1: upstream_output.checksum_sha1,
+            checksum_sha256: upstream_output.checksum_sha256,
+            content_disposition: upstream_output.content_disposition,
+            content_encoding: upstream_output.content_encoding,
+            content_language: upstream_output.content_language,
+            content_length: upstream_output.content_length,
+            content_range: upstream_output.content_range,
+            content_type: upstream_output.content_type,
+            delete_marker: upstream_output.delete_marker,
             e_tag: Some(blob.etag),
-            expiration,
-            expires,
+            expiration: upstream_output.expiration,
+            expires: upstream_output.expires,
             last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
                 object.last_modified.date(),
                 object.last_modified.time(),
                 time::UtcOffset::UTC,
             ))),
-            metadata,
-            missing_meta,
-            parts_count,
-            tag_count,
+            metadata: upstream_output.metadata,
+            missing_meta: upstream_output.missing_meta,
+            parts_count: upstream_output.parts_count,
+            tag_count: upstream_output.tag_count,
             ..Default::default()
         };
         Ok(S3Response::new(output))
@@ -406,45 +313,28 @@ impl S3 for RadosStore {
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn head_object(&self, req: S3Request<HeadObjectInput>) -> S3Result<S3Response<HeadObjectOutput>> {
-        let HeadObjectInput {
-            bucket,
-            checksum_mode,
-            expected_bucket_owner,
-            if_match,
-            if_modified_since,
-            if_none_match,
-            if_unmodified_since,
-            key,
-            part_number,
-            range,
-            request_payer,
-            sse_customer_algorithm,
-            sse_customer_key,
-            sse_customer_key_md5,
-            version_id,
-        } = req.input;
         let input = s3s::dto::GetObjectInput {
-            bucket,
-            checksum_mode,
-            expected_bucket_owner,
-            if_match,
-            if_modified_since,
-            if_none_match,
-            if_unmodified_since,
-            key,
-            part_number,
-            range,
-            request_payer,
+            bucket: req.input.bucket,
+            checksum_mode: req.input.checksum_mode,
+            expected_bucket_owner: req.input.expected_bucket_owner,
+            if_match: req.input.if_match,
+            if_modified_since: req.input.if_modified_since,
+            if_none_match: req.input.if_none_match,
+            if_unmodified_since: req.input.if_unmodified_since,
+            key: req.input.key,
+            part_number: req.input.part_number,
+            range: req.input.range,
+            request_payer: req.input.request_payer,
             response_cache_control: None,
             response_content_disposition: None,
             response_content_encoding: None,
             response_content_language: None,
             response_content_type: None,
             response_expires: None,
-            sse_customer_algorithm,
-            sse_customer_key,
-            sse_customer_key_md5,
-            version_id,
+            sse_customer_algorithm: req.input.sse_customer_algorithm,
+            sse_customer_key: req.input.sse_customer_key,
+            sse_customer_key_md5: req.input.sse_customer_key_md5,
+            version_id: req.input.version_id,
         };
 
         let Some((object, blob)) = self.db.get_object(&input).await? else {
@@ -462,7 +352,7 @@ impl S3 for RadosStore {
             .part_number(input.part_number)
             .range(input.range);
 
-        let mut res = self.blob.head_object(req, &blob.placement).await?;
+        let mut res = try_!(self.blob.head_object(req, &blob.placement).await);
         res.output.e_tag = Some(blob.etag.clone());
         res.output.last_modified = Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
             object.last_modified.date(),
@@ -509,7 +399,7 @@ impl S3 for RadosStore {
 
     async fn list_object_versions(
         &self,
-        req: S3Request<ListObjectVersionsInput>,
+        _req: S3Request<ListObjectVersionsInput>,
     ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
         todo!()
         // let mut v2_resp = self
@@ -587,7 +477,7 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
+    async fn list_objects_v2(&self, _req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
         todo!()
         // let list_result = self
         //     .db
@@ -672,72 +562,30 @@ impl S3 for RadosStore {
         let new_blob = Uuid::new_v4();
         self.db.create_blob_temp(&new_blob, &bucket.location).await?;
 
-        let PutObjectInput {
-            body,
-            // bucket,
-            key,
-            metadata,
-            tagging,
-            content_length,
-            content_md5,
-            // acl,
-            // bucket_key_enabled,
-            cache_control,
-            checksum_algorithm,
-            checksum_crc32,
-            checksum_crc32c,
-            checksum_sha1,
-            checksum_sha256,
-            content_disposition,
-            content_encoding,
-            content_language,
-            content_type,
-            // expected_bucket_owner,
-            // expires,
-            // grant_full_control,
-            // grant_read,
-            // grant_read_acp,
-            // grant_write_acp,
-            // object_lock_legal_hold_status,
-            // object_lock_mode,
-            // object_lock_retain_until_date,
-            // request_payer,
-            sse_customer_algorithm,
-            sse_customer_key,
-            sse_customer_key_md5,
-            ssekms_encryption_context,
-            ssekms_key_id,
-            server_side_encryption,
-            // storage_class,
-            // website_redirect_location,
-            ..
-        } = input;
-
         // put addiotional metadata for redundancy
-
         let put_request = s3s::dto::PutObjectInput::builder()
-            .body(body)
+            .body(input.body)
             .key(new_blob.to_string())
-            .metadata(metadata)
-            .tagging(tagging)
-            .content_length(content_length)
-            .content_md5(content_md5)
-            .cache_control(cache_control)
-            .checksum_algorithm(checksum_algorithm.clone())
-            .checksum_crc32(checksum_crc32)
-            .checksum_crc32c(checksum_crc32c)
-            .checksum_sha1(checksum_sha1)
-            .checksum_sha256(checksum_sha256)
-            .content_disposition(content_disposition)
-            .content_encoding(content_encoding)
-            .content_language(content_language)
-            .content_type(content_type)
-            .sse_customer_algorithm(sse_customer_algorithm)
-            .sse_customer_key(sse_customer_key)
-            .sse_customer_key_md5(sse_customer_key_md5)
-            .ssekms_encryption_context(ssekms_encryption_context)
-            .ssekms_key_id(ssekms_key_id)
-            .server_side_encryption(server_side_encryption);
+            .metadata(input.metadata)
+            .tagging(input.tagging)
+            .content_length(input.content_length)
+            .content_md5(input.content_md5)
+            .cache_control(input.cache_control)
+            .checksum_algorithm(input.checksum_algorithm.clone())
+            .checksum_crc32(input.checksum_crc32)
+            .checksum_crc32c(input.checksum_crc32c)
+            .checksum_sha1(input.checksum_sha1)
+            .checksum_sha256(input.checksum_sha256)
+            .content_disposition(input.content_disposition)
+            .content_encoding(input.content_encoding)
+            .content_language(input.content_language)
+            .content_type(input.content_type)
+            .sse_customer_algorithm(input.sse_customer_algorithm)
+            .sse_customer_key(input.sse_customer_key)
+            .sse_customer_key_md5(input.sse_customer_key_md5)
+            .ssekms_encryption_context(input.ssekms_encryption_context)
+            .ssekms_key_id(input.ssekms_key_id)
+            .server_side_encryption(input.server_side_encryption);
 
         let put_response = match self.blob.put_object(put_request, &bucket.location).await {
             Ok(x) => x,
@@ -746,44 +594,27 @@ impl S3 for RadosStore {
                 return Err(e);
             }
         };
-        let s3s::dto::PutObjectOutput {
-            // bucket_key_enabled,
-            checksum_crc32,
-            checksum_crc32c,
-            checksum_sha1,
-            checksum_sha256,
-            e_tag,
-            // expiration,
-            // request_charged,
-            // sse_customer_algorithm,
-            // sse_customer_key_md5,
-            // ssekms_encryption_context,
-            // ssekms_key_id,
-            // server_side_encryption,
-            // version_id,
-            ..
-        } = put_response.output;
 
         let object = &crate::meta_store::Object {
             bucket_name: bucket.name,
-            oid: key,
+            oid: input.key,
             last_modified: PrimitiveDateTime::MIN,
             blob_id: Some(new_blob),
         };
         let blob = crate::meta_store::Blob {
             id: new_blob,
-            size: content_length.expect("content length is not provided"), // TODO: check that length exists
+            size: input.content_length.expect("content length is not provided"), // TODO: check that length exists
             placement: bucket.location,
-            etag: e_tag.clone().expect("no etag returned from the backing store"),
+            etag: put_response.output.e_tag.clone().expect("no etag returned from the backing store"),
         };
 
         let _timestamp = self.db.commit_object(&object, &blob).await?;
         let response = s3s::dto::PutObjectOutput {
-            checksum_crc32,
-            checksum_crc32c,
-            checksum_sha1,
-            checksum_sha256,
-            e_tag,
+            checksum_crc32: put_response.output.checksum_crc32,
+            checksum_crc32c: put_response.output.checksum_crc32c,
+            checksum_sha1: put_response.output.checksum_sha1,
+            checksum_sha256: put_response.output.checksum_sha256,
+            e_tag: put_response.output.e_tag,
             // version_id, // TODO: handle versioning
             ..Default::default()
         };
@@ -829,8 +660,4 @@ impl S3 for RadosStore {
         };
         Ok(S3Response::new(response))
     }
-}
-
-fn hex(input: impl AsRef<[u8]>) -> String {
-    hex_simd::encode_to_string(input.as_ref(), hex_simd::AsciiCase::Lower)
 }

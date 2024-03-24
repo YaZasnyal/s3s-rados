@@ -1,17 +1,13 @@
 use std::fmt::Debug;
 
-use s3s::dto::Timestamp;
-use sqlx::pool::PoolConnection;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
-use crate::meta_store::{
-    self, Blob, BlobLocation, Bucket, MetaStore, MetaStoreError, MultipartUpload, Object, Transaction, TransactionError,
-};
-use crate::meta_store::{ListOptions, ListResult, User};
+use crate::meta_store::User;
+use crate::meta_store::{self, Blob, BlobLocation, Bucket, MultipartUpload, Object};
 use sqlx::postgres::PgPool;
+use sqlx::Connection;
 use sqlx::Row;
-use sqlx::{Connection, PgConnection, Postgres};
 
 pub struct PostgresDatabase {
     db_conn: PgPool,

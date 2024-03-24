@@ -1,10 +1,9 @@
-use std::{borrow::Borrow, fmt::Debug, ops::Deref};
+use std::{fmt::Debug};
 
-use aws_config::{meta::region::RegionProviderChain, BehaviorVersion, Region};
+use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::config::Credentials;
-use hyper::Uri;
 
-use crate::meta_store::{self, Bucket};
+use crate::meta_store::{self};
 use s3s::{dto::CreateBucketInput, S3Request, S3Response, S3Result, S3};
 use s3s_aws::Proxy;
 
