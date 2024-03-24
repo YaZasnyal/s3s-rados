@@ -1,4 +1,4 @@
-use std::{fmt::Debug};
+use std::fmt::Debug;
 
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::config::Credentials;

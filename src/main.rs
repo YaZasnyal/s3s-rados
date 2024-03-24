@@ -20,8 +20,6 @@ use tracing_subscriber::prelude::*;
 #[macro_use]
 mod error;
 
-// mod blob_store;
-// mod ceph_store;
 mod s3_client;
 mod meta_store;
 mod pg_database;
