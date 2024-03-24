@@ -1,86 +1,6 @@
 use s3s::{self};
 use uuid::Uuid;
 
-// /// Transaction MUST be rolled back on Drop if commit has not been called.
-// ///
-// ///
-// ///
-// /// This can be done asynchronously.
-// #[async_trait::async_trait]
-// pub trait Transaction: Send {
-//     fn chain(&mut self, next: Box<dyn Transaction>);
-
-//     /// transactions are commited in the reverse order
-//     async fn commit(self: Box<Self>) -> Result<(), TransactionError>;
-//     async fn rollback(self: Box<Self>) -> Result<(), TransactionError>;
-// }
-
-// #[derive(Debug)]
-// pub enum MetaStoreError {
-//     NoSuchObject,
-//     AlreadyExists,
-// }
-
-// #[async_trait::async_trait]
-// pub trait MetaStore: Send + Sync + std::fmt::Debug + 'static {
-//     /// Write complete object metadata and commit temporary blob
-//     ///
-//     /// TODO: Handle versioned
-//     async fn write_object_metadata_with_blob(&self, bucket: &Bucket, object: &Object, blob: &Blob) -> Result<(), s3s::S3Error>;
-
-//     async fn write_object_metadata(
-//         &self,
-//         bucket: &str,
-//         object: &str,
-//         metadata: &s3s::dto::Metadata,
-//     ) -> Result<(), MetaStoreError>;
-
-//     /// load object metadata from the metadata storage
-//     ///
-//     /// MUST NOT be cached
-//     async fn load_object_metadata(
-//         &self,
-//         bucket: &str,
-//         object: &str,
-//         version: &Option<s3s::dto::ObjectVersionId>,
-//     ) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error>;
-
-//     /// This function does not delete object from the store. It is done by GC
-//     ///
-//     /// TODO: Handle versioned
-//     async fn delete_object_metadata(
-//         &self,
-//         bucket: &str,
-//         object: &str,
-//         version: &Option<s3s::dto::ObjectVersionId>,
-//     ) -> Result<(), s3s::S3Error>;
-
-//     /// Writes blob metadata to the temp storage. This is a first stage of the two-phase-commit
-//     /// 2PC allow to clean data from the storage if an error occures.
-//     async fn write_temp_blob(&self, blob: &Blob) -> Result<(), s3s::S3Error>;
-
-//     /// Does not return any error because GC should handle failures
-//     async fn clean_temp_blob(&self, blob: &Blob);
-//     /// Remove commited blob asynchronously
-//     async fn add_blob_gc(&self, blob: &Blob) -> Result<User, s3s::S3Error>;
-
-//     // list objects (with prefix)
-//     // async fn list_objects<'a>(&self, options: ListOptions<'a>) -> Result<ListResult, S3Error>;
-
-//     async fn create_bucket(&self, owner: &str, bucket: &str) -> Result<Bucket, S3Error>;
-//     async fn delete_bucket(&self, bucket: &str) -> Result<(), S3Error>;
-//     /// Should be cached
-//     async fn get_bucket_metadata(&self, bucket: &str) -> Result<Option<Bucket>, s3s::S3Error>;
-//     async fn list_buckets_by_user(&self, user: &str) -> Result<Vec<Bucket>, s3s::S3Error>;
-
-//     // May be cached
-//     // user metadata
-//     async fn get_user_by_access_key(&self, key: &str) -> Result<User, s3s::S3Error>;
-
-//     // config log
-//     async fn get_blob_gc(&self) -> anyhow::Result<Vec<Uuid>>;
-// }
-
 pub type AccountId = s3s::dto::AccountId;
 pub type Timestamp = time::PrimitiveDateTime;
 
@@ -207,4 +127,12 @@ pub struct MultipartUpload {
     pub blob_id: Uuid,
     pub uploaded_at: Timestamp,
     pub location: BlobLocation,
+}
+
+#[derive(Debug)]
+pub struct ListResult {
+    pub objects: Vec<(Object, Option<Blob>)>,
+    pub common_prefixes: Vec<String>,
+    pub marker: Option<String>,
+    pub version_marker: Option<String>,
 }

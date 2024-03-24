@@ -498,68 +498,57 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn list_objects_v2(&self, _req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
-        todo!()
-        // let list_result = self
-        //     .db
-        //     .list_objects(ListOptions {
-        //         bucket: &req.input.bucket,
-        //         prefix: &req.input.prefix,
-        //         delim: &req.input.delimiter.as_ref().map_or("/", |v| &v),
-        //         marker: &req.input.start_after,
-        //         max_keys: 1000,
-        //         with_versions: false,
-        //         version_marker: None,
-        //     })
-        //     .await?;
+    async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
+        let list_result = try_!(self.db.list_objects(&req.input).await);
+        
+        let crate::meta_store::ListResult {
+            objects,
+            common_prefixes,
+            marker,
+            //version_marker,
+            ..
+        } = list_result;
 
-        // let ListResult {
-        //     objects,
-        //     common_prefixes,
-        //     marker,
-        //     version_marker,
-        // } = list_result;
+        let objects: Vec<s3s::dto::Object> = objects
+            .into_iter()
+            .map(|(o, b)| s3s::dto::Object {
+                checksum_algorithm: None,
+                e_tag: if let Some(b) = &b { Some(b.etag.clone()) } else { None },
+                key: Some(o.oid),
+                last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
+                    o.last_modified.date(),
+                    o.last_modified.time(),
+                    time::UtcOffset::UTC,
+                ))),
+                owner: None,
+                restore_status: None,
+                size: if let Some(b) = &b { Some(b.size) } else { Some(0) },
+                storage_class: None,
+            })
+            .collect();
 
-        // let objects: Vec<s3s::dto::Object> = objects
-        //     .into_iter()
-        //     .map(|(o, b)| s3s::dto::Object {
-        //         checksum_algorithm: None,
-        //         e_tag: if let Some(b) = &b { Some(b.etag.clone()) } else { None },
-        //         key: Some(o.oid),
-        //         last_modified: Some(s3s::dto::Timestamp::from(time::OffsetDateTime::new_in_offset(
-        //             o.last_modified.date(),
-        //             o.last_modified.time(),
-        //             time::UtcOffset::UTC,
-        //         ))),
-        //         owner: None,
-        //         restore_status: None,
-        //         size: if let Some(b) = &b { Some(b.size) } else { Some(0) },
-        //         storage_class: None,
-        //     })
-        //     .collect();
+        let common_prefixes = common_prefixes
+            .into_iter()
+            .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
+            .collect();
 
-        // let common_prefixes = common_prefixes
-        //     .into_iter()
-        //     .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
-        //     .collect();
+        let output = s3s::dto::ListObjectsV2Output {
+            common_prefixes: Some(common_prefixes),
+            key_count: Some(objects.len() as i32),
+            contents: Some(objects),
+            delimiter: req.input.delimiter,
+            encoding_type: None,
+            is_truncated: Some(marker.is_some()),
+            max_keys: Some(1000),
+            name: Some(req.input.bucket),
+            prefix: req.input.prefix,
+            request_charged: None,
+            continuation_token: req.input.continuation_token,
+            next_continuation_token: marker,
+            start_after: None,
+        };
 
-        // let output = s3s::dto::ListObjectsV2Output {
-        //     common_prefixes: Some(common_prefixes),
-        //     key_count: Some(objects.len() as i32),
-        //     contents: Some(objects),
-        //     delimiter: req.input.delimiter,
-        //     encoding_type: None,
-        //     is_truncated: Some(marker.is_some()),
-        //     max_keys: Some(1000),
-        //     name: Some(req.input.bucket),
-        //     prefix: req.input.prefix,
-        //     request_charged: None,
-        //     continuation_token: req.input.continuation_token,
-        //     next_continuation_token: marker,
-        //     start_after: None,
-        // };
-
-        // Ok(S3Response::new(output))
+        Ok(S3Response::new(output))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
