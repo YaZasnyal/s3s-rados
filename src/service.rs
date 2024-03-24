@@ -56,11 +56,20 @@ impl S3 for RadosStore {
             .key(upload.blob_id.to_string())
             .multipart_upload(input.multipart_upload)
             .upload_id(input.upload_id);
-        let upstream_response = self
-            .blob
-            .complete_multipart_upload(upstream_request, &bucket.location)
-            .await?
-            .output;
+        let upstream_response = try_!(self.blob.complete_multipart_upload(upstream_request, &bucket.location).await).output;
+
+        // make head request to fetch blob length
+        let content_length = try_!(
+            self.blob
+                .head_object(
+                    s3s::dto::builders::HeadObjectInputBuilder::default().key(upload.blob_id.to_string()),
+                    &bucket.location
+                )
+                .await
+        )
+        .output
+        .content_length
+        .expect("backing store must return content_length");
 
         self.db
             .complete_multipart(
@@ -72,12 +81,12 @@ impl S3 for RadosStore {
                 },
                 &Blob {
                     id: upload.blob_id.clone(),
-                    size: 0, // TODO: handle by the backing store or move completely to the proxy
+                    size: content_length,
                     placement: upload.location.clone(),
                     etag: upstream_response
                         .e_tag
                         .as_ref()
-                        .expect("No etag returned from the backing store")
+                        .expect("no etag returned from the backing store")
                         .clone(),
                 },
                 &upload,
@@ -136,6 +145,7 @@ impl S3 for RadosStore {
         Ok(S3Response::new(output))
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn create_multipart_upload(
         &self,
         req: S3Request<CreateMultipartUploadInput>,
@@ -200,38 +210,49 @@ impl S3 for RadosStore {
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    async fn delete_bucket(&self, _req: S3Request<DeleteBucketInput>) -> S3Result<S3Response<DeleteBucketOutput>> {
-        todo!()
-        // if req.credentials.is_none() {
-        //     return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
-        // }
+    async fn delete_bucket(&self, req: S3Request<DeleteBucketInput>) -> S3Result<S3Response<DeleteBucketOutput>> {
+        if req.credentials.is_none() {
+            return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
+        }
 
-        // let Some(_bucket) = self.db.get_bucket_metadata(&req.input.bucket).await? else {
-        //     return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
-        // };
-        // // TODO: check ownership
-        // // TODO: check empty
+        let Some(bucket) = self.db.get_bucket(&req.input.bucket).await? else {
+            return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
+        };
+        // TODO: check ownership
 
-        // self.db.delete_bucket(&req.input.bucket).await?;
-        // Ok(S3Response::new(DeleteBucketOutput {}))
+        let gc_job_id = try_!(self.db.delete_bucket(&req.input.bucket, &bucket.location).await);
+        if let Ok(_) = self.blob.delete_bucket(&req.input.bucket, &bucket.location).await {
+            // remove bucket from the gc queue. Ignore the error because GC should handle it just fine
+            self.db.delete_bucket_complete(&gc_job_id).await.ok();
+        }
+        // even if backing store returned an error we return Ok. GC must retry this operation untill it completes
+        Ok(S3Response::new(DeleteBucketOutput {}))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn delete_object(&self, _req: S3Request<DeleteObjectInput>) -> S3Result<S3Response<DeleteObjectOutput>> {
-        todo!()
+    async fn delete_object(&self, req: S3Request<DeleteObjectInput>) -> S3Result<S3Response<DeleteObjectOutput>> {
         // // check acl
         // // check bucket lock
-        // //self.db.
 
-        // self.db
-        //     .delete_object_metadata(&req.input.bucket, &req.input.key, &req.input.version_id)
-        //     .await?;
+        let blob = self.db.delete_object(&req.input).await?;
 
-        // Ok(S3Response::new(DeleteObjectOutput {
-        //     delete_marker: Some(false), // TODO: handle versioned
-        //     request_charged: None,
-        //     version_id: None,
-        // }))
+        // delete blob from the backing store
+        if let Ok(_) = self
+            .blob
+            .delete_object(
+                s3s::dto::builders::DeleteObjectInputBuilder::default().key(blob.id.to_string()),
+                &blob.placement,
+            )
+            .await
+        {
+            self.db.delete_blob_gc(&blob).await.ok();
+        };
+
+        Ok(S3Response::new(DeleteObjectOutput {
+            delete_marker: Some(false), // TODO: handle versioned
+            request_charged: None,
+            version_id: None,
+        }))
     }
 
     async fn delete_objects(&self, _req: S3Request<DeleteObjectsInput>) -> S3Result<S3Response<DeleteObjectsOutput>> {
@@ -562,7 +583,7 @@ impl S3 for RadosStore {
         let new_blob = Uuid::new_v4();
         self.db.create_blob_temp(&new_blob, &bucket.location).await?;
 
-        // put addiotional metadata for redundancy
+        // TODO: put additional metadata for redundancy
         let put_request = s3s::dto::PutObjectInput::builder()
             .body(input.body)
             .key(new_blob.to_string())
@@ -605,10 +626,28 @@ impl S3 for RadosStore {
             id: new_blob,
             size: input.content_length.expect("content length is not provided"), // TODO: check that length exists
             placement: bucket.location,
-            etag: put_response.output.e_tag.clone().expect("no etag returned from the backing store"),
+            etag: put_response
+                .output
+                .e_tag
+                .clone()
+                .expect("no etag returned from the backing store"),
         };
 
-        let _timestamp = self.db.commit_object(&object, &blob).await?;
+        let (_timestamp, old_blob) = self.db.commit_object(&object, &blob).await?;
+        if let Some(old_blob) = old_blob {
+            if let Ok(_) = self
+                .blob
+                .delete_object(
+                    s3s::dto::builders::DeleteObjectInputBuilder::default().key(old_blob.id.to_string()),
+                    &old_blob.placement,
+                )
+                .await
+            {
+                // ignore the error. GC must handle it jost fine
+                self.db.delete_blob_gc(&old_blob).await.ok();
+            }
+        }
+
         let response = s3s::dto::PutObjectOutput {
             checksum_crc32: put_response.output.checksum_crc32,
             checksum_crc32c: put_response.output.checksum_crc32c,

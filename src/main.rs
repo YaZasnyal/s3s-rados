@@ -29,10 +29,10 @@ mod service;
 #[command(version)]
 struct Opt {
     /// Host name to listen on.
-    #[arg(long, short, default_value = "/etc/ceph/ceph.conf")]
-    config: String,
+    // #[arg(long, short, default_value = "/etc/ceph/ceph.conf")]
+    // config: String,
 
-    #[arg(long, default_value = "localhost")]
+    #[arg(long, default_value = "0.0.0.0")]
     host: String,
 
     /// Port number to listen on.
@@ -52,8 +52,8 @@ struct Opt {
     domain_name: Option<String>,
 
     /// Root directory of stored data.
-    #[arg(long, short)]
-    pool: String,
+    // #[arg(long, short)]
+    // pool: String,
 
     /// Opentelemetry endpoint (http://ip:port)
     #[arg(long)]

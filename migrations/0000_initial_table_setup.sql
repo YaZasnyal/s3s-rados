@@ -36,6 +36,11 @@ CREATE TABLE buckets_temp (
     creation_date timestamp not null
 );
 
+CREATE TABLE buckets_gc (
+    id uuid PRIMARY KEY,
+    location blob_location not null
+);
+
 CREATE TABLE blobs (
     id uuid PRIMARY KEY,
     location blob_location not null,
@@ -65,8 +70,7 @@ CREATE TABLE temp_blobs (
 CREATE INDEX temp_blobs_uploaded_at ON temp_blobs(uploaded_at);
 
 CREATE TABLE blobs_gc (
-    id uuid PRIMARY KEY,
-    location blob_location not null
+    id uuid PRIMARY KEY
 );
 
 CREATE TABLE active_multipart_uploads (

@@ -54,17 +54,32 @@ impl S3Client {
     pub fn get_location(&self, region: &str, bucket: &str) -> meta_store::BlobLocation {
         // TODO: check if auto
 
+        let new_name = format!("{}-{}", bucket, uuid::Uuid::new_v4().to_string());
         meta_store::BlobLocation {
             region: region.to_owned(),
-            backend: bucket.to_owned(),
+            backend: new_name,
         }
     }
 
-    pub async fn create_bucket(&self, name: &str, _region: &meta_store::BlobLocation) -> Result<(), s3s::S3Error> {
-        //try_!(self.client.create_bucket().set_bucket(Some(name.to_owned())).send().await);
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn create_bucket(&self, _name: &str, region: &meta_store::BlobLocation) -> Result<(), s3s::S3Error> {
+        tracing::info!("creating bucket in the backing store");
         self.proxy
             .create_bucket(S3Request::new(try_!(CreateBucketInput::builder()
-                .bucket(name.to_owned())
+                .bucket(region.backend.clone())
+                //TODO: set location
+                .build())))
+            .await?;
+        tracing::info!("created bucket in the backing store");
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info", skip_all)]
+    pub async fn delete_bucket(&self, _name: &str, region: &meta_store::BlobLocation) -> Result<(), s3s::S3Error> {
+        //try_!(self.client.create_bucket().set_bucket(Some(name.to_owned())).send().await);
+        self.proxy
+            .delete_bucket(S3Request::new(try_!(s3s::dto::builders::DeleteBucketInputBuilder::default()
+                .bucket(region.backend.clone())
                 //TODO: set location
                 .build())))
             .await?;
@@ -99,6 +114,16 @@ impl S3Client {
     ) -> S3Result<S3Response<s3s::dto::HeadObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
         self.proxy.head_object(s3s::S3Request::new(req)).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    pub async fn delete_object(
+        &self,
+        req: s3s::dto::builders::DeleteObjectInputBuilder,
+        region: &meta_store::BlobLocation,
+    ) -> S3Result<S3Response<s3s::dto::DeleteObjectOutput>> {
+        let req = try_!(req.bucket(region.backend.clone()).build());
+        self.proxy.delete_object(s3s::S3Request::new(req)).await
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
