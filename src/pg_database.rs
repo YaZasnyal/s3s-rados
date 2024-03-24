@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use futures_core::Future;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
@@ -8,6 +9,64 @@ use crate::meta_store::{ListResult, User};
 use sqlx::postgres::PgPool;
 use sqlx::Connection;
 use sqlx::Row;
+
+// async fn retry_transaction<'a, T>(f: impl Future<Output = Result<T, TransactionError>>) -> Result<T, s3s::S3Error>
+// //where
+//     //F: Future<Output = Result<T, TransactionError>>,
+// {
+//     for _ in 1..10 {
+//         let e = match f.await {
+//             Ok(x) => return Ok(x),
+//             Err(e) => e,
+//         };
+
+//         match e {
+//             TransactionError::S3Error(e) => {
+//                 return Err(e);
+//             }
+//             TransactionError::SqlError(e) => {
+//                 tracing::debug!(?e, "transaction failed with an error")
+//             }
+//         }
+//     }
+
+//     Err(s3s::S3Error::with_message(
+//         s3s::S3ErrorCode::InternalError,
+//         "unable to commit database transaction after multiple retries",
+//     ))
+// }
+
+macro_rules! retry_transaction {
+    ($func:block) => {
+        async {
+            for i in 1..=10 {
+                let e = match async { $func }.instrument(tracing::debug_span!("db_try_transaction")).await {
+                    Ok(x) => return Ok(x),
+                    Err(e) => e,
+                };
+                if i == 10 {
+                    tracing::error!(?e, "transaction failed with an error");
+                }
+
+                match e {
+                    TransactionError::S3Error(e) => {
+                        return Err(e);
+                    }
+                    TransactionError::SqlError(e) => {
+                        tracing::debug!(?e, "transaction failed with an error");
+                    }
+                }
+            }
+
+            tracing::warn!("unable to commit database transaction after multiple retries");
+            Err(s3s::S3Error::with_message(
+                s3s::S3ErrorCode::InternalError,
+                "unable to commit database transaction after multiple retries",
+            ))
+        }
+        .await
+    };
+}
 
 pub struct PostgresDatabase {
     db_conn: PgPool,
@@ -87,23 +146,23 @@ impl PostgresDatabase {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_bucket(&self, name: &str) -> Result<Option<Bucket>, s3s::S3Error> {
-        let row = try_!(
-            sqlx::query("SELECT name, user_id, creation_date, location FROM buckets WHERE name = $1")
+        retry_transaction!({
+            let row = sqlx::query("SELECT name, user_id, creation_date, location FROM buckets WHERE name = $1")
                 .bind(name)
                 .fetch_optional(&self.db_conn)
-                .await
-        );
+                .await?;
 
-        let Some(row) = row else {
-            return Ok(None);
-        };
+            let Some(row) = row else {
+                return Ok(None);
+            };
 
-        Ok(Some(Bucket {
-            name: try_!(row.try_get("name")),
-            owner: try_!(row.try_get("user_id")),
-            creation_date: try_!(row.try_get("creation_date")),
-            location: try_!(row.try_get("location")),
-        }))
+            Ok(Some(Bucket {
+                name: row.try_get("name")?,
+                owner: row.try_get("user_id")?,
+                creation_date: row.try_get("creation_date")?,
+                location: row.try_get("location")?,
+            }))
+        })
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -270,18 +329,18 @@ impl PostgresDatabase {
     }
 
     /// Inserts a new object and returns the old blob if present
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "debug", skip(self))]
     pub async fn commit_object(
         &self,
         object: &Object,
         blob: &Blob,
     ) -> Result<(meta_store::Timestamp, Option<Blob>), s3s::S3Error> {
-        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
-        try_!(
+        retry_transaction!({
+            let mut tx = self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await?;
             sqlx::query(
                 r#"
                 WITH DELETED AS (DELETE FROM temp_blobs WHERE id = $1)
-                INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)"#
+                INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)"#,
             )
             .bind(&blob.id)
             .bind(&blob.placement.region)
@@ -290,45 +349,50 @@ impl PostgresDatabase {
             .bind(blob.size)
             .execute(&mut *tx)
             .instrument(debug_span!("db_insert_blob"))
-            .await
-        );
+            .await?;
 
-        let row = try_!(
-            sqlx::query(r#"
-                WITH OLD AS ( SELECT * FROM PUBLIC.OBJECTS JOIN BLOBS ON BLOBS.ID = OBJECTS.BLOB WHERE BUCKET = $1 AND OID = $2 ORDER BY LAST_MODIFIED DESC LIMIT 1 ), 
-                     BLOBS_GC AS ( INSERT INTO BLOBS_GC (ID) SELECT ID FROM OLD ), 
-                     DELETE_OBJ AS ( DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED IN ( SELECT LAST_MODIFIED FROM OLD ) ) 
-                SELECT * FROM OLD"#)
+            let row = sqlx::query("SELECT * FROM OBJECTS JOIN BLOBS ON BLOBS.ID = OBJECTS.BLOB WHERE BUCKET = $1 AND OID = $2 ORDER BY LAST_MODIFIED DESC LIMIT 1")
                 .bind(&object.bucket_name)
                 .bind(&object.oid)
                 .fetch_optional(&mut *tx)
                 .instrument(debug_span!("db_remove_old_object"))
-                .await
-        );
-        let old_blob = if let Some(row) = row {
-            Some(Blob {
-                id: try_!(row.try_get("id")),
-                size: try_!(row.try_get("size")),
-                etag: try_!(row.try_get("etag")),
-                placement: try_!(row.try_get("location")),
-            })
-        } else {
-            None
-        };
+                .await?;
+            let old_blob = if let Some(row) = row {
+                let blob_id: Uuid = row.try_get("id")?;
+                let last_modified: meta_store::Timestamp = row.try_get("last_modified")?;
+                sqlx::query("INSERT INTO BLOBS_GC (ID) VALUES ($1)")
+                    .bind(&blob_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED = $3")
+                    .bind(&object.bucket_name)
+                    .bind(&object.oid)
+                    .bind(&last_modified)
+                    .execute(&mut *tx)
+                    .await?;
 
-        let timestamp = try_!(
-            sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES($1, $2, CURRENT_TIMESTAMP, $3) RETURNING last_modified")
+                Some(Blob {
+                    id: row.try_get("id")?,
+                    size: row.try_get("size")?,
+                    etag: row.try_get("etag")?,
+                    placement: row.try_get("location")?,
+                })
+            } else {
+                None
+            };
+
+            let timestamp = sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES($1, $2, CURRENT_TIMESTAMP, $3) RETURNING last_modified")
                 .bind(&object.bucket_name)
                 .bind(&object.oid)
                 .bind(&blob.id)
                 .fetch_one(&mut *tx)
                 .instrument(debug_span!("db_insert_object"))
-                .await
-        );
-        let timestamp: meta_store::Timestamp = try_!(timestamp.try_get("last_modified"));
+                .await?;
+            let timestamp: meta_store::Timestamp = timestamp.try_get("last_modified")?;
 
-        try_!(tx.commit().instrument(debug_span!("db_commit_transaction")).await);
-        Ok((timestamp, old_blob))
+            tx.commit().instrument(debug_span!("db_commit_transaction")).await?;
+            Ok((timestamp, old_blob))
+        })
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
@@ -607,4 +671,12 @@ impl PostgresDatabase {
     pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
         todo!()
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum TransactionError {
+    #[error("S3 error")]
+    S3Error(#[from] s3s::S3Error),
+    #[error("SQL error")]
+    SqlError(#[from] sqlx::Error),
 }

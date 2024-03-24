@@ -24,8 +24,8 @@ impl S3Client {
 
         let cred = Credentials::new(key_id, secret_key, None, None, "loaded-from-custom-env");
 
-        // let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
-        let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        // let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::v2023_11_09())
             .endpoint_url(url)

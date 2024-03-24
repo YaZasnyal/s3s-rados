@@ -622,7 +622,7 @@ impl S3 for RadosStore {
                 .expect("no etag returned from the backing store"),
         };
 
-        let (_timestamp, old_blob) = self.db.commit_object(&object, &blob).await?;
+        let (_timestamp, old_blob) = try_!(self.db.commit_object(&object, &blob).await);
         if let Some(old_blob) = old_blob {
             if let Ok(_) = self
                 .blob
