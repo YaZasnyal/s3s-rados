@@ -3,14 +3,14 @@ use s3s::{s3_error, S3Request, S3Response, S3Result, S3};
 use time::PrimitiveDateTime;
 use uuid::Uuid;
 
+use crate::config::Settings;
 use crate::meta_store::{Blob, MultipartUpload, Object};
 use crate::pg_database::PostgresDatabase;
 use crate::s3_client::S3Client;
-use crate::config::Settings;
 
 #[derive(Debug)]
 pub struct RadosStore {
-    cfg: std::sync::Arc<Settings>,
+    _cfg: std::sync::Arc<Settings>,
     db: Box<PostgresDatabase>,
     blob: Box<S3Client>,
 }
@@ -18,7 +18,7 @@ pub struct RadosStore {
 impl RadosStore {
     pub async fn new(cfg: std::sync::Arc<Settings>) -> Self {
         Self {
-            cfg: cfg.clone(),
+            _cfg: cfg.clone(),
             db: Box::new(PostgresDatabase::new(cfg.clone()).await),
             blob: Box::new(S3Client::new(cfg).await),
         }
@@ -74,7 +74,8 @@ impl S3 for RadosStore {
         .content_length
         .expect("backing store must return content_length");
 
-        self.db
+        let old_blob = self
+            .db
             .complete_multipart(
                 &Object {
                     bucket_name: upload.bucket.clone(),
@@ -95,6 +96,19 @@ impl S3 for RadosStore {
                 &upload,
             )
             .await?;
+        if let Some(old_blob) = old_blob {
+            if let Ok(_) = self
+                .blob
+                .delete_object(
+                    s3s::dto::builders::DeleteObjectInputBuilder::default().key(old_blob.id.to_string()),
+                    &old_blob.placement,
+                )
+                .await
+            {
+                // ignore the error. GC must handle it jost fine
+                self.db.delete_blob_gc(&old_blob).await.ok();
+            }
+        }
 
         let response = s3s::dto::CompleteMultipartUploadOutput {
             bucket: Some(upload.bucket),
@@ -503,7 +517,7 @@ impl S3 for RadosStore {
     #[tracing::instrument(level = "debug")]
     async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
         let list_result = try_!(self.db.list_objects(&req.input).await);
-        
+
         let crate::meta_store::ListResult {
             objects,
             common_prefixes,

@@ -5,15 +5,25 @@ use uuid::Uuid;
 
 use crate::meta_store::{self, Blob, BlobLocation, Bucket, MultipartUpload, Object};
 use crate::meta_store::{ListResult, User};
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::Connection;
 use sqlx::Row;
-use sqlx::{ConnectOptions, Connection, Postgres};
+
+#[derive(thiserror::Error, Debug)]
+enum TransactionError {
+    #[error("S3 error")]
+    S3Error(#[from] s3s::S3Error),
+    #[error("SQL error")]
+    SqlError(#[from] sqlx::Error),
+    // #[error("Transaction error")]
+    // Transaction(#[from] TransactionError),
+}
 
 macro_rules! retry_transaction {
     ($func:block) => {
         async {
             for i in 1..=10 {
-                let e = match async { $func }.instrument(tracing::debug_span!("db_try_transaction")).await {
+                let e: TransactionError = match async { $func }.instrument(tracing::debug_span!("db_try_transaction")).await {
                     Ok(x) => return Ok(x),
                     Err(e) => e,
                 };
@@ -42,7 +52,7 @@ macro_rules! retry_transaction {
 }
 
 pub struct PostgresDatabase {
-    cfg: std::sync::Arc<crate::config::Settings>,
+    _cfg: std::sync::Arc<crate::config::Settings>,
     db_conn: PgPool,
 }
 
@@ -95,7 +105,10 @@ impl PostgresDatabase {
             .expect("unable to perform migrations");
         tracing::info!("finished database migration");
 
-        Self { cfg, db_conn: pool }
+        Self {
+            _cfg: cfg,
+            db_conn: pool,
+        }
     }
 }
 
@@ -331,28 +344,18 @@ impl PostgresDatabase {
             .instrument(debug_span!("db_insert_blob"))
             .await?;
 
-            let row = sqlx::query("SELECT * FROM OBJECTS JOIN BLOBS ON BLOBS.ID = OBJECTS.BLOB WHERE BUCKET = $1 AND OID = $2 ORDER BY LAST_MODIFIED DESC LIMIT 1")
-                .bind(&object.bucket_name)
-                .bind(&object.oid)
-                .fetch_optional(&mut *tx)
-                .instrument(debug_span!("db_select_old_object"))
-                .await?;
-            let old_blob = if let Some(row) = row {
-                let blob_id: Uuid = row.try_get("id")?;
-                let last_modified: meta_store::Timestamp = row.try_get("last_modified")?;
-                sqlx::query("INSERT INTO BLOBS_GC (ID) VALUES ($1)")
-                    .bind(&blob_id)
-                    .execute(&mut *tx)
-                    .instrument(debug_span!("db_gc_old_blob"))
-                    .await?;
-                sqlx::query("DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED = $3")
+            let row = sqlx::query(r#"
+                    WITH OLD AS ( SELECT * FROM PUBLIC.OBJECTS JOIN BLOBS ON BLOBS.ID = OBJECTS.BLOB WHERE BUCKET = $1 AND OID = $2 ORDER BY LAST_MODIFIED DESC LIMIT 1 ), 
+                         BLOBS_GC AS ( INSERT INTO BLOBS_GC (ID) SELECT ID FROM OLD ), 
+                         DELETE_OBJ AS ( DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED IN ( SELECT LAST_MODIFIED FROM OLD ) ) 
+                    SELECT * FROM OLD"#)
                     .bind(&object.bucket_name)
                     .bind(&object.oid)
-                    .bind(&last_modified)
-                    .execute(&mut *tx)
-                    .instrument(debug_span!("db_delete_old_object"))
+                    .fetch_optional(&mut *tx)
+                    .instrument(debug_span!("db_remove_old_object"))
                     .await?;
 
+            let old_blob = if let Some(row) = row {
                 Some(Blob {
                     id: row.try_get("id")?,
                     size: row.try_get("size")?,
@@ -611,9 +614,14 @@ impl PostgresDatabase {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    pub async fn complete_multipart(&self, object: &Object, blob: &Blob, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
-        let mut tx = try_!(self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await);
-        try_!(
+    pub async fn complete_multipart(
+        &self,
+        object: &Object,
+        blob: &Blob,
+        upload: &MultipartUpload,
+    ) -> Result<Option<Blob>, s3s::S3Error> {
+        retry_transaction!({
+            let mut tx = self.db_conn.begin().instrument(debug_span!("db_begin_transaction")).await?;
             sqlx::query("INSERT INTO blobs (id, location, etag, size) VALUES($1, ($2, $3)::blob_location, $4, $5)")
                 .bind(&blob.id)
                 .bind(&blob.placement.region)
@@ -622,43 +630,53 @@ impl PostgresDatabase {
                 .bind(blob.size)
                 .execute(&mut *tx)
                 .instrument(debug_span!("db_insert_blob"))
-                .await
-        );
+                .await?;
 
-        try_!(
+            let row = sqlx::query(r#"
+                    WITH OLD AS ( SELECT * FROM PUBLIC.OBJECTS JOIN BLOBS ON BLOBS.ID = OBJECTS.BLOB WHERE BUCKET = $1 AND OID = $2 ORDER BY LAST_MODIFIED DESC LIMIT 1 ), 
+                         BLOBS_GC AS ( INSERT INTO BLOBS_GC (ID) SELECT ID FROM OLD ), 
+                         DELETE_OBJ AS ( DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED IN ( SELECT LAST_MODIFIED FROM OLD ) ) 
+                    SELECT * FROM OLD"#)
+                    .bind(&object.bucket_name)
+                    .bind(&object.oid)
+                    .fetch_optional(&mut *tx)
+                    .instrument(debug_span!("db_remove_old_object"))
+                    .await?;
+
+            let old_blob = if let Some(row) = row {
+                Some(Blob {
+                    id: row.try_get("id")?,
+                    size: row.try_get("size")?,
+                    etag: row.try_get("etag")?,
+                    placement: row.try_get("location")?,
+                })
+            } else {
+                None
+            };
+
             sqlx::query("INSERT INTO objects (bucket, oid, last_modified, blob) VALUES($1, $2, CURRENT_TIMESTAMP, $3)")
                 .bind(&object.bucket_name)
                 .bind(&object.oid)
                 .bind(&blob.id)
                 .execute(&mut *tx)
                 .instrument(debug_span!("db_insert_object"))
-                .await
-        );
+                .await?;
 
-        try_!(
             sqlx::query("DELETE FROM active_multipart_uploads WHERE bucket = $1 AND oid = $2 AND upload_id = $3")
                 .bind(&upload.bucket)
                 .bind(&upload.oid)
                 .bind(&upload.upload_id)
                 .execute(&mut *tx)
                 .instrument(debug_span!("db_delete_active_multipart"))
-                .await
-        );
+                .await?;
 
-        try_!(tx.commit().instrument(debug_span!("db_commit_transaction")).await);
-        Ok(())
+            tx.commit().instrument(debug_span!("db_commit_transaction")).await?;
+            Ok(old_blob)
+        })
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
         todo!()
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-enum TransactionError {
-    #[error("S3 error")]
-    S3Error(#[from] s3s::S3Error),
-    #[error("SQL error")]
-    SqlError(#[from] sqlx::Error),
 }

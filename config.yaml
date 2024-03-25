@@ -1,21 +1,30 @@
+api:
+  host: 0.0.0.0
+  port: 8014
+  # domain: string
+
 db:
   host: localhost
-  port: 5432
-  # port: 5433
+  # port: 5432
+  port: 5433
   db_name: s3srados
-  # user: yugabyte
-  # password: yugabyte
-  user: postgres
-  password: mysecretpassword
+  user: yugabyte
+  password: yugabyte
+  # user: postgres
+  # password: mysecretpassword
 
 storage:
   host: localhost
-  port: 9001
-  # port: 8015
+  # port: 9001
+  port: 8015
   access_key: qwe
   secret_key: asdfghjkl
   insecure: True
-  bucket: test_bucket
+  bucket: test
+
+auth:
+  access_key: qwe
+  secret_key: asd
 
 regions:
   - minio:

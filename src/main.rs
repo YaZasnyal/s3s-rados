@@ -20,40 +20,17 @@ use tracing_subscriber::prelude::*;
 #[macro_use]
 mod error;
 
-mod s3_client;
+mod config;
 mod meta_store;
 mod pg_database;
+mod s3_client;
 mod service;
-mod config;
 
 #[derive(Debug, Parser)]
 #[command(version)]
 struct Opt {
     #[arg(long, short, default_value = "config.yaml")]
     config: String,
-
-    #[arg(long, default_value = "0.0.0.0")]
-    host: String,
-
-    /// Port number to listen on.
-    #[arg(long, default_value = "8014")] // The original design was finished on 2020-08-14.
-    port: u16,
-
-    /// Access key used for authentication.
-    #[arg(long, short)]
-    access_key: Option<String>,
-
-    /// Secret key used for authentication.
-    #[arg(long, short)]
-    secret_key: Option<String>,
-
-    /// Domain name used for virtual-hosted-style requests.
-    #[arg(long)]
-    domain_name: Option<String>,
-
-    /// Root directory of stored data.
-    // #[arg(long, short)]
-    // pool: String,
 
     /// Opentelemetry endpoint (http://ip:port)
     #[arg(long)]
@@ -66,19 +43,17 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let config = std::sync::Arc::new(config::Settings::new(&opt.config)?);
 
     setup_tracing(&opt).unwrap();
-    let store = RadosStore::new(config).await;
+    let store = RadosStore::new(config.clone()).await;
 
     let service = {
         let mut b = S3ServiceBuilder::new(store);
 
         // Enable authentication
-        if let (Some(ak), Some(sk)) = (opt.access_key, opt.secret_key) {
-            b.set_auth(SimpleAuth::from_single(ak, sk));
-            info!("authentication is enabled");
-        }
+        b.set_auth(SimpleAuth::from_single(config.auth.access_key.clone(), config.auth.secret_key.clone()));
+        info!("authentication is enabled");
 
         // Enable parsing virtual-hosted-style requests
-        if let Some(domain_name) = opt.domain_name {
+        if let Some(domain_name) = &config.api.domain {
             b.set_base_domain(domain_name);
             info!("virtual-hosted-style requests are enabled");
         }
@@ -86,7 +61,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         b.build()
     };
 
-    let listener = TcpListener::bind((opt.host.as_str(), opt.port))?;
+    let listener = TcpListener::bind((config.api.host.as_str(), config.api.port))?;
     let local_addr = listener.local_addr()?;
 
     let server = Server::from_tcp(listener)?.serve(service.into_shared().into_make_service());

@@ -73,7 +73,7 @@ impl S3Client {
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn create_bucket(&self, _name: &str, region: &meta_store::BlobLocation) -> Result<(), s3s::S3Error> {
         if self.cfg.storage.bucket.is_some() {
-            return Ok(())
+            return Ok(());
         }
 
         tracing::info!("creating bucket in the backing store");
@@ -90,9 +90,9 @@ impl S3Client {
     #[tracing::instrument(level = "info", skip_all)]
     pub async fn delete_bucket(&self, _name: &str, region: &meta_store::BlobLocation) -> Result<(), s3s::S3Error> {
         if self.cfg.storage.bucket.is_some() {
-            return Ok(())
+            return Ok(());
         }
-        
+
         self.proxy
             .delete_bucket(S3Request::new(try_!(s3s::dto::builders::DeleteBucketInputBuilder::default()
                 .bucket(region.backend.clone())
