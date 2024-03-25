@@ -23,6 +23,7 @@ pub struct Storage {
     pub access_key: String,
     pub secret_key: String,
     pub insecure: bool,
+    pub bucket: Option<String>,
 }
 
 impl Settings {

@@ -20,7 +20,7 @@ impl Debug for S3Client {
 
 impl S3Client {
     pub async fn new(cfg: std::sync::Arc<crate::config::Settings>) -> Self {
-        let key_id = cfg.storage.access_key.clone(); 
+        let key_id = cfg.storage.access_key.clone();
         let secret_key = cfg.storage.secret_key.to_owned();
 
         let cred = Credentials::new(key_id, secret_key, None, None, "loaded-from-custom-env");
@@ -30,7 +30,7 @@ impl S3Client {
             if cfg.storage.insecure { "http" } else { "https" },
             cfg.storage.host,
             cfg.storage.port
-        ); 
+        );
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::v2023_11_09())
             .endpoint_url(url)
@@ -59,7 +59,11 @@ impl S3Client {
     pub fn get_location(&self, region: &str, bucket: &str) -> meta_store::BlobLocation {
         // TODO: check if auto
 
-        let new_name = format!("{}-{}", bucket, uuid::Uuid::new_v4().to_string());
+        let new_name = if let Some(x) = &self.cfg.storage.bucket {
+            x.clone()
+        } else {
+            format!("{}-{}", bucket, uuid::Uuid::new_v4().to_string())
+        };
         meta_store::BlobLocation {
             region: region.to_owned(),
             backend: new_name,
