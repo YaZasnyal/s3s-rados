@@ -1,6 +1,7 @@
 db:
   host: localhost
   port: 5432
+  # port: 5433
   db_name: s3srados
   # user: yugabyte
   # password: yugabyte
@@ -9,8 +10,8 @@ db:
 
 storage:
   host: localhost
-  # port: 9100
-  port: 8015
+  port: 9001
+  # port: 8015
   access_key: qwe
   secret_key: asdfghjkl
   insecure: True
