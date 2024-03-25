@@ -79,7 +79,12 @@ impl PostgresDatabase {
         }
 
         let url = "postgresql://localhost:5433/s3srados?user=yugabyte&password=yugabyte";
-        let pool = PgPoolOptions::new().max_connections(50).connect(url).await.unwrap();
+        let pool = PgPoolOptions::new()
+            .min_connections(20)
+            .max_connections(50)
+            .connect(url)
+            .await
+            .unwrap();
 
         tracing::info!("starting database migration");
         sqlx::migrate!("./migrations")
