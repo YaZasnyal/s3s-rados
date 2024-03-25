@@ -1,40 +1,13 @@
 use std::fmt::Debug;
 
-use futures_core::Future;
 use tracing::{debug_span, Instrument};
 use uuid::Uuid;
 
 use crate::meta_store::{self, Blob, BlobLocation, Bucket, MultipartUpload, Object};
 use crate::meta_store::{ListResult, User};
-use sqlx::postgres::PgPool;
-use sqlx::Connection;
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::Row;
-
-// async fn retry_transaction<'a, T>(f: impl Future<Output = Result<T, TransactionError>>) -> Result<T, s3s::S3Error>
-// //where
-//     //F: Future<Output = Result<T, TransactionError>>,
-// {
-//     for _ in 1..10 {
-//         let e = match f.await {
-//             Ok(x) => return Ok(x),
-//             Err(e) => e,
-//         };
-
-//         match e {
-//             TransactionError::S3Error(e) => {
-//                 return Err(e);
-//             }
-//             TransactionError::SqlError(e) => {
-//                 tracing::debug!(?e, "transaction failed with an error")
-//             }
-//         }
-//     }
-
-//     Err(s3s::S3Error::with_message(
-//         s3s::S3ErrorCode::InternalError,
-//         "unable to commit database transaction after multiple retries",
-//     ))
-// }
+use sqlx::{ConnectOptions, Connection, Postgres};
 
 macro_rules! retry_transaction {
     ($func:block) => {
@@ -106,7 +79,7 @@ impl PostgresDatabase {
         }
 
         let url = "postgresql://localhost:5433/s3srados?user=yugabyte&password=yugabyte";
-        let pool = PgPool::connect(url).await.expect("Unable to establish database connection");
+        let pool = PgPoolOptions::new().max_connections(50).connect(url).await.unwrap();
 
         tracing::info!("starting database migration");
         sqlx::migrate!("./migrations")
@@ -355,7 +328,7 @@ impl PostgresDatabase {
                 .bind(&object.bucket_name)
                 .bind(&object.oid)
                 .fetch_optional(&mut *tx)
-                .instrument(debug_span!("db_remove_old_object"))
+                .instrument(debug_span!("db_select_old_object"))
                 .await?;
             let old_blob = if let Some(row) = row {
                 let blob_id: Uuid = row.try_get("id")?;
@@ -363,12 +336,14 @@ impl PostgresDatabase {
                 sqlx::query("INSERT INTO BLOBS_GC (ID) VALUES ($1)")
                     .bind(&blob_id)
                     .execute(&mut *tx)
+                    .instrument(debug_span!("db_gc_old_blob"))
                     .await?;
                 sqlx::query("DELETE FROM OBJECTS WHERE BUCKET = $1 AND OID = $2 AND LAST_MODIFIED = $3")
                     .bind(&object.bucket_name)
                     .bind(&object.oid)
                     .bind(&last_modified)
                     .execute(&mut *tx)
+                    .instrument(debug_span!("db_delete_old_object"))
                     .await?;
 
                 Some(Blob {

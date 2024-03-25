@@ -54,9 +54,7 @@ CREATE TABLE objects (
     last_modified timestamp not null,
     blob uuid,
 
-    PRIMARY KEY(bucket, oid, last_modified),
-    CONSTRAINT bucket_id_fk FOREIGN KEY (bucket) REFERENCES buckets(name) ON DELETE RESTRICT,
-    CONSTRAINT blob_id_fk FOREIGN KEY (blob) REFERENCES blobs(id) ON DELETE RESTRICT
+    PRIMARY KEY(bucket, oid, last_modified)
 )
 PARTITION BY LIST (bucket);
 CREATE INDEX ON objects(blob);
