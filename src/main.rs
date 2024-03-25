@@ -24,13 +24,13 @@ mod s3_client;
 mod meta_store;
 mod pg_database;
 mod service;
+mod config;
 
 #[derive(Debug, Parser)]
 #[command(version)]
 struct Opt {
-    /// Host name to listen on.
-    // #[arg(long, short, default_value = "/etc/ceph/ceph.conf")]
-    // config: String,
+    #[arg(long, short, default_value = "config.yaml")]
+    config: String,
 
     #[arg(long, default_value = "0.0.0.0")]
     host: String,
@@ -63,8 +63,10 @@ struct Opt {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::parse();
+    let config = std::sync::Arc::new(config::Settings::new(&opt.config)?);
+
     setup_tracing(&opt).unwrap();
-    let store = RadosStore::new().await;
+    let store = RadosStore::new(config).await;
 
     let service = {
         let mut b = S3ServiceBuilder::new(store);

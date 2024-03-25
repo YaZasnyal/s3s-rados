@@ -1,9 +1,19 @@
-metadata:
+db:
   host: localhost
-  port: 5433
-  database: s3srados
-  user: yugabyte
-  password: yugabyte
+  port: 5432
+  db_name: s3srados
+  # user: yugabyte
+  # password: yugabyte
+  user: postgres
+  password: mysecretpassword
+
+storage:
+  host: localhost
+  # port: 9100
+  port: 8015
+  access_key: qwe
+  secret_key: asdfghjkl
+  insecure: True
 
 regions:
   - minio:

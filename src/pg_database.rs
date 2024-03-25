@@ -42,13 +42,17 @@ macro_rules! retry_transaction {
 }
 
 pub struct PostgresDatabase {
+    cfg: std::sync::Arc<crate::config::Settings>,
     db_conn: PgPool,
 }
 
 impl PostgresDatabase {
-    pub async fn new() -> Self {
-        let url = "postgresql://localhost:5433/?user=yugabyte&password=yugabyte";
-        let mut conn = sqlx::PgConnection::connect(url)
+    pub async fn new(cfg: std::sync::Arc<crate::config::Settings>) -> Self {
+        let url = format!(
+            "postgresql://{}:{}/?user={}&password={}",
+            cfg.db.host, cfg.db.port, cfg.db.user, cfg.db.password
+        );
+        let mut conn = sqlx::PgConnection::connect(&url)
             .await
             .expect("unable to connect to the database");
 
@@ -64,12 +68,7 @@ impl PostgresDatabase {
                 r#"
             CREATE DATABASE s3srados
                 WITH
-                OWNER = yugabyte
-                ENCODING = 'UTF8'
-                LC_COLLATE = 'C'
-                LC_CTYPE = 'en_US.UTF-8'
                 CONNECTION LIMIT = -1
-                IS_TEMPLATE = False;
             "#,
             )
             .execute(&mut conn)
@@ -78,11 +77,14 @@ impl PostgresDatabase {
             tracing::info!("database was created successfully");
         }
 
-        let url = "postgresql://localhost:5433/s3srados?user=yugabyte&password=yugabyte";
+        let url = format!(
+            "postgresql://{}:{}/{}?user={}&password={}",
+            cfg.db.host, cfg.db.port, cfg.db.db_name, cfg.db.user, cfg.db.password
+        );
         let pool = PgPoolOptions::new()
             .min_connections(20)
             .max_connections(50)
-            .connect(url)
+            .connect(&url)
             .await
             .unwrap();
 
@@ -93,7 +95,7 @@ impl PostgresDatabase {
             .expect("unable to perform migrations");
         tracing::info!("finished database migration");
 
-        Self { db_conn: pool }
+        Self { cfg, db_conn: pool }
     }
 }
 

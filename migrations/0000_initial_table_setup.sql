@@ -49,7 +49,7 @@ CREATE TABLE blobs (
 );
 
 CREATE TABLE objects (
-    bucket varchar not null,
+    bucket varchar(63) not null,
     oid varchar(1024) not null,
     last_modified timestamp not null,
     blob uuid,
@@ -72,7 +72,7 @@ CREATE TABLE blobs_gc (
 );
 
 CREATE TABLE active_multipart_uploads (
-    bucket varchar not null,
+    bucket varchar(63) not null,
     oid varchar(1024) not null,
     upload_id varchar UNIQUE not null,
     blob_id uuid not null,

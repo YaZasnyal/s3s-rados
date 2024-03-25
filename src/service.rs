@@ -6,18 +6,21 @@ use uuid::Uuid;
 use crate::meta_store::{Blob, MultipartUpload, Object};
 use crate::pg_database::PostgresDatabase;
 use crate::s3_client::S3Client;
+use crate::config::Settings;
 
 #[derive(Debug)]
 pub struct RadosStore {
+    cfg: std::sync::Arc<Settings>,
     db: Box<PostgresDatabase>,
     blob: Box<S3Client>,
 }
 
 impl RadosStore {
-    pub async fn new() -> Self {
+    pub async fn new(cfg: std::sync::Arc<Settings>) -> Self {
         Self {
-            db: Box::new(PostgresDatabase::new().await),
-            blob: Box::new(S3Client::new().await),
+            cfg: cfg.clone(),
+            db: Box::new(PostgresDatabase::new(cfg.clone()).await),
+            blob: Box::new(S3Client::new(cfg).await),
         }
     }
 }

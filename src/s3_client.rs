@@ -8,6 +8,7 @@ use s3s::{dto::CreateBucketInput, S3Request, S3Response, S3Result, S3};
 use s3s_aws::Proxy;
 
 pub struct S3Client {
+    cfg: std::sync::Arc<crate::config::Settings>,
     proxy: Proxy,
 }
 
@@ -18,14 +19,18 @@ impl Debug for S3Client {
 }
 
 impl S3Client {
-    pub async fn new() -> Self {
-        let key_id = "qwe".to_owned(); //dotenv_codegen::dotenv!("MINIO_ACCESS_KEY_ID").to_string();
-        let secret_key = "asdfghjkl".to_owned(); //dotenv_codegen::dotenv!("MINIO_SECRET_ACCESS_KEY").to_string();
+    pub async fn new(cfg: std::sync::Arc<crate::config::Settings>) -> Self {
+        let key_id = cfg.storage.access_key.clone(); 
+        let secret_key = cfg.storage.secret_key.to_owned();
 
         let cred = Credentials::new(key_id, secret_key, None, None, "loaded-from-custom-env");
 
-        // let url = "http://localhost:8015".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
-        let url = "http://localhost:9001".to_owned(); //dotenv_codegen::dotenv!("MINIO_URL");
+        let url = format!(
+            "{}://{}:{}",
+            if cfg.storage.insecure { "http" } else { "https" },
+            cfg.storage.host,
+            cfg.storage.port
+        ); 
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::v2023_11_09())
             .endpoint_url(url)
@@ -42,7 +47,7 @@ impl S3Client {
 
         let proxy = s3s_aws::Proxy::from(client);
 
-        Self { proxy }
+        Self { cfg, proxy }
     }
 }
 
