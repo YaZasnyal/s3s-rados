@@ -710,7 +710,7 @@ impl S3 for RadosStore {
             .key(upload.blob_id.to_string())
             .part_number(input.part_number)
             .upload_id(input.upload_id);
-
+        
         let upstream_response = self.blob.upload_part(request, &upload.location).await?.output;
 
         let response = s3s::dto::UploadPartOutput {

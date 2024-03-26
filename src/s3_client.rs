@@ -109,7 +109,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::PutObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.put_object(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "put_object: sending upstream request");
+        let res = self.proxy.put_object(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "put_object: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -119,7 +122,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::GetObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.get_object(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "get_object: sending upstream request");
+        let res = self.proxy.get_object(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "get_object: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -129,7 +135,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::HeadObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.head_object(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "head_object: sending upstream request");
+        let res = self.proxy.head_object(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "head_object: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -139,7 +148,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::DeleteObjectOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.delete_object(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "delete_object: sending upstream request");
+        let res = self.proxy.delete_object(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "delete_object: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -149,7 +161,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::CreateMultipartUploadOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.create_multipart_upload(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "create_multipart_upload: sending upstream request");
+        let res = self.proxy.create_multipart_upload(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "create_multipart_upload: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -159,7 +174,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::CompleteMultipartUploadOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.complete_multipart_upload(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "complete_multipart_upload: sending upstream request");
+        let res = self.proxy.complete_multipart_upload(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "complete_multipart_upload: upstream response");
+        Ok(res)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -169,7 +187,10 @@ impl S3Client {
         region: &meta_store::BlobLocation,
     ) -> S3Result<S3Response<s3s::dto::UploadPartOutput>> {
         let req = try_!(req.bucket(region.backend.clone()).build());
-        self.proxy.upload_part(s3s::S3Request::new(req)).await
+        tracing::info!(?req, "upload_part: sending upstream request");
+        let res = self.proxy.upload_part(s3s::S3Request::new(req)).await?;
+        tracing::info!(res = ?res.output, "upload_part: sending upstream request");
+        Ok(res)
     }
 }
 

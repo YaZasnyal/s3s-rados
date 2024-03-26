@@ -119,7 +119,7 @@ impl Debug for PostgresDatabase {
 }
 
 impl PostgresDatabase {
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn get_user_by_access_key(&self, key: &str) -> Result<User, s3s::S3Error> {
         let res = sqlx::query("SELECT users.* from keys JOIN users ON keys.user_id = users.id WHERE keys.access_key = $1")
             .bind(key)
@@ -137,7 +137,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn get_bucket(&self, name: &str) -> Result<Option<Bucket>, s3s::S3Error> {
         retry_transaction!({
             let row = sqlx::query("SELECT name, user_id, creation_date, location FROM buckets WHERE name = $1")
@@ -158,7 +158,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn create_bucket_temp(&self, name: &str, region: &BlobLocation) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("INSERT INTO buckets_temp (name, location, creation_date) VALUES ($1, ($2, $3)::blob_location, CURRENT_TIMESTAMP)")
@@ -171,7 +171,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_bucket_temp(&self, name: &str) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("DELETE FROM buckets_temp WHERE name = $1")
@@ -185,7 +185,7 @@ impl PostgresDatabase {
     /// deletes buckets from the database and places it for garbage collector
     ///
     /// GC should remove all buckets from the backing stores
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_bucket(&self, name: &str, location: &BlobLocation) -> Result<Uuid, s3s::S3Error> {
         let mut tx = try_!(self.db_conn.begin().await);
         let row = try_!(
@@ -228,7 +228,7 @@ impl PostgresDatabase {
         Ok(job_uuid)
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_bucket_complete(&self, job_id: &Uuid) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("DELETE FROM buckets_gc WHERE id = $1")
@@ -239,7 +239,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn commit_bucket(&self, name: &str, user: &User, region: &BlobLocation) -> Result<(), s3s::S3Error> {
         let mut tx = try_!(self.db_conn.begin().await);
         try_!(
@@ -249,12 +249,14 @@ impl PostgresDatabase {
                 .bind(&region.region)
                 .bind(&region.backend)
                 .execute(&mut *tx)
+                .instrument(tracing::debug_span!("db_insert_bucket"))
                 .await
         );
         try_!(
             sqlx::query("DELETE FROM buckets_temp WHERE name = $1")
                 .bind(name)
                 .execute(&mut *tx)
+                .instrument(tracing::debug_span!("db_delete_temp_bucket"))
                 .await
         );
         // TODO: create partition
@@ -274,7 +276,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn list_buckets_by_user(&self, user_id: &str) -> Result<Vec<Bucket>, s3s::S3Error> {
         let res = sqlx::query("SELECT * FROM buckets WHERE user_id = $1 ORDER BY NAME ASC")
             .bind(user_id)
@@ -294,7 +296,7 @@ impl PostgresDatabase {
             .collect()
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn create_blob_temp(&self, id: &Uuid, location: &BlobLocation) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query(
@@ -310,7 +312,7 @@ impl PostgresDatabase {
     }
 
     /// the object has never been bushed to the backing store
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_blob_temp(&self, id: &Uuid) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("DELETE FROM temp_blobs WHERE id = $1")
@@ -322,7 +324,7 @@ impl PostgresDatabase {
     }
 
     /// Inserts a new object and returns the old blob if present
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn commit_object(
         &self,
         object: &Object,
@@ -380,7 +382,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn get_object(&self, req: &s3s::dto::GetObjectInput) -> Result<Option<(Object, Option<Blob>)>, s3s::S3Error> {
         // TODO: handle version
         let row = try_!(
@@ -430,7 +432,7 @@ impl PostgresDatabase {
         Ok(Some((object, blob)))
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_object(&self, req: &s3s::dto::DeleteObjectInput) -> Result<Blob, s3s::S3Error> {
         // TODO: handle versioning
         let mut tx = try_!(self.db_conn.begin().await);
@@ -445,6 +447,7 @@ impl PostgresDatabase {
             .bind(&req.bucket)
             .bind(&req.key)
             .fetch_optional(&mut *tx)
+            .instrument(tracing::debug_span!("db_fetch_object"))
             .await
         );
 
@@ -463,6 +466,7 @@ impl PostgresDatabase {
             sqlx::query("INSERT INTO blobs_gc(id) VALUES ($1)")
                 .bind(&blob.id)
                 .execute(&mut *tx)
+                .instrument(tracing::debug_span!("db_gc_insert_object"))
                 .await
         );
 
@@ -470,6 +474,7 @@ impl PostgresDatabase {
         Ok(blob)
     }
 
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn list_objects(&self, req: &s3s::dto::ListObjectsV2Input) -> Result<ListResult, s3s::S3Error> {
         // TODO: Handle versions
         // TODO: sanitize input
@@ -552,7 +557,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn delete_blob_gc(&self, blob: &Blob) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query(
@@ -567,7 +572,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn create_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query("INSERT INTO active_multipart_uploads (bucket, oid, upload_id, blob_id, uploaded_at, location) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, ($5, $6)::blob_location)")
@@ -583,7 +588,7 @@ impl PostgresDatabase {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn get_multipart(&self, bucket: &str, oid: &str, upload_id: &str) -> Result<Option<MultipartUpload>, s3s::S3Error> {
         let row = try_!(
             sqlx::query("SELECT * FROM active_multipart_uploads WHERE bucket = $1 AND oid = $2 AND upload_id = $3")
@@ -608,12 +613,12 @@ impl PostgresDatabase {
         }))
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn list_multipart(&self, bucket: &str) -> Result<Vec<MultipartUpload>, s3s::S3Error> {
         todo!()
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn complete_multipart(
         &self,
         object: &Object,
@@ -675,7 +680,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), s3s::S3Error> {
         todo!()
     }
