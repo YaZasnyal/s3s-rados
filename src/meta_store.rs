@@ -92,7 +92,7 @@ pub struct Object {
     // legal_hold
 }
 
-#[derive(Debug, Clone, sqlx::Type)]
+#[derive(Debug, Clone, sqlx::Type, serde::Serialize)]
 #[sqlx(type_name = "blob_location")]
 pub struct BlobLocation {
     pub region: String,

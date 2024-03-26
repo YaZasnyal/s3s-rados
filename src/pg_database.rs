@@ -137,7 +137,7 @@ impl PostgresDatabase {
         })
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "debug", skip(self))]
     pub async fn get_bucket(&self, name: &str) -> Result<Option<Bucket>, s3s::S3Error> {
         retry_transaction!({
             let row = sqlx::query("SELECT name, user_id, creation_date, location FROM buckets WHERE name = $1")
@@ -294,7 +294,7 @@ impl PostgresDatabase {
             .collect()
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "debug", skip(self))]
     pub async fn create_blob_temp(&self, id: &Uuid, location: &BlobLocation) -> Result<(), s3s::S3Error> {
         try_!(
             sqlx::query(

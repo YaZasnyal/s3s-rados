@@ -27,6 +27,7 @@ impl RadosStore {
 
 #[async_trait::async_trait]
 impl S3 for RadosStore {
+    #[tracing::instrument(level = "info", skip_all)]
     async fn abort_multipart_upload(
         &self,
         _req: S3Request<AbortMultipartUploadInput>,
@@ -34,6 +35,7 @@ impl S3 for RadosStore {
         Err(s3_error!(NotImplemented, "AbortMultipartUpload is not implemented yet"))
     }
 
+    #[tracing::instrument(level = "info", skip_all)]
     async fn complete_multipart_upload(
         &self,
         req: S3Request<CompleteMultipartUploadInput>,
@@ -123,7 +125,7 @@ impl S3 for RadosStore {
         Ok(S3Response::new(response))
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn create_bucket(&self, req: S3Request<CreateBucketInput>) -> S3Result<S3Response<CreateBucketOutput>> {
         let Some(creds) = &req.credentials else {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
@@ -162,7 +164,7 @@ impl S3 for RadosStore {
         Ok(S3Response::new(output))
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn create_multipart_upload(
         &self,
         req: S3Request<CreateMultipartUploadInput>,
@@ -246,8 +248,9 @@ impl S3 for RadosStore {
         Ok(S3Response::new(DeleteBucketOutput {}))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn delete_object(&self, req: S3Request<DeleteObjectInput>) -> S3Result<S3Response<DeleteObjectOutput>> {
+        tracing::info!(?req, "delete_object");
         // // check acl
         // // check bucket lock
 
@@ -265,19 +268,22 @@ impl S3 for RadosStore {
             self.db.delete_blob_gc(&blob).await.ok();
         };
 
-        Ok(S3Response::new(DeleteObjectOutput {
+        let response = DeleteObjectOutput {
             delete_marker: Some(false), // TODO: handle versioned
             request_charged: None,
             version_id: None,
-        }))
+        };
+        tracing::info!(?response, "delete_object finished");
+        Ok(S3Response::new(response))
     }
 
     async fn delete_objects(&self, _req: S3Request<DeleteObjectsInput>) -> S3Result<S3Response<DeleteObjectsOutput>> {
         Err(s3_error!(NotImplemented, "DeleteObjects is not implemented yet"))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn get_object(&self, req: S3Request<GetObjectInput>) -> S3Result<S3Response<GetObjectOutput>> {
+        tracing::info!(?req, "get_object");
         // //TODO: validate user
         // //TODO: conditions
         let Some((object, blob)) = self.db.get_object(&req.input).await? else {
@@ -331,10 +337,11 @@ impl S3 for RadosStore {
             tag_count: upstream_output.tag_count,
             ..Default::default()
         };
+        tracing::info!(?output, "get_object finished");
         Ok(S3Response::new(output))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn head_bucket(&self, req: S3Request<HeadBucketInput>) -> S3Result<S3Response<HeadBucketOutput>> {
         let Some(_bucket) = self.db.get_bucket(&req.input.bucket).await? else {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
@@ -349,8 +356,9 @@ impl S3 for RadosStore {
         }))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn head_object(&self, req: S3Request<HeadObjectInput>) -> S3Result<S3Response<HeadObjectOutput>> {
+        tracing::info!(?req, "head_object");
         let input = s3s::dto::GetObjectInput {
             bucket: req.input.bucket,
             checksum_mode: req.input.checksum_mode,
@@ -397,12 +405,13 @@ impl S3 for RadosStore {
             object.last_modified.time(),
             time::UtcOffset::UTC,
         )));
-
+        tracing::info!(output = ?res.output, "head_object");
         Ok(S3Response::new(res.output))
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn list_buckets(&self, req: S3Request<ListBucketsInput>) -> S3Result<S3Response<ListBucketsOutput>> {
+        tracing::info!(?req, "list_buckets");
         let Some(creds) = &req.credentials else {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
         };
@@ -432,6 +441,7 @@ impl S3 for RadosStore {
                 display_name: Some(user.name),
             }),
         };
+        tracing::info!(?output, "list_buckets finished");
         Ok(S3Response::new(output))
     }
 
@@ -496,7 +506,7 @@ impl S3 for RadosStore {
         // Ok(output)
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn list_objects(&self, req: S3Request<ListObjectsInput>) -> S3Result<S3Response<ListObjectsOutput>> {
         let v2_resp = self.list_objects_v2(req.map_input(Into::into)).await?;
 
@@ -514,8 +524,9 @@ impl S3 for RadosStore {
         }))
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(level = "info", skip_all)]
     async fn list_objects_v2(&self, req: S3Request<ListObjectsV2Input>) -> S3Result<S3Response<ListObjectsV2Output>> {
+        tracing::info!(?req, "list_objects_v2");
         let list_result = try_!(self.db.list_objects(&req.input).await);
 
         let crate::meta_store::ListResult {
@@ -565,11 +576,14 @@ impl S3 for RadosStore {
             start_after: None,
         };
 
+        tracing::trace!(?output, "list_objects_v2 finished");
+        tracing::info!("list_objects_v2 finished successfully");
         Ok(S3Response::new(output))
     }
 
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(level = "info", skip_all, err)]
     async fn put_object(&self, req: S3Request<PutObjectInput>) -> S3Result<S3Response<PutObjectOutput>> {
+        tracing::info!(?req, "received put request");
         let input = req.input;
         if let Some(ref storage_class) = input.storage_class {
             let is_valid = ["STANDARD"].contains(&storage_class.as_str()); // todo handle storage tiers
@@ -587,6 +601,7 @@ impl S3 for RadosStore {
         }
 
         let new_blob = Uuid::new_v4();
+        tracing::info!(location = ?bucket.location, "creating temp blob");
         self.db.create_blob_temp(&new_blob, &bucket.location).await?;
 
         // TODO: put additional metadata for redundancy
@@ -663,10 +678,13 @@ impl S3 for RadosStore {
             // version_id, // TODO: handle versioning
             ..Default::default()
         };
+        tracing::info!(?response, "finished blob upload");
         Ok(S3Response::new(response))
     }
 
+    #[tracing::instrument(level = "info", skip_all, err)]
     async fn upload_part(&self, req: S3Request<UploadPartInput>) -> S3Result<S3Response<UploadPartOutput>> {
+        tracing::info!(?req, "upload_part");
         let input = req.input;
         let Some(_bucket) = self.db.get_bucket(&input.bucket).await? else {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
@@ -703,6 +721,7 @@ impl S3 for RadosStore {
             e_tag: upstream_response.e_tag,
             ..Default::default()
         };
+        tracing::info!(?response, "finished part upload");
         Ok(S3Response::new(response))
     }
 }

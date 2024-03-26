@@ -24,7 +24,7 @@ time = "0.3.34"
 thiserror = "1.0.58"
 
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "time", "tracing-log"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "time", "tracing-log", "json"] }
 tracing-error = "0.2.0"
 tracing-opentelemetry = "0.23.0"
 opentelemetry = {version = "0.22.0"}
@@ -33,3 +33,4 @@ opentelemetry_sdk = {version = "0.22.1", features = ["rt-tokio"]}
 opentelemetry-otlp = {version = "0.15.0", features = ["grpc-tonic"]}
 tonic = "0.11.0"
 serde = { version = "1.0.197", features = ["derive"] }
+tracing-core = "0.1.32"

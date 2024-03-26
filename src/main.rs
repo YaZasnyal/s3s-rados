@@ -107,10 +107,14 @@ fn setup_tracing(args: &Opt) -> Result<(), Box<dyn std::error::Error + Send + Sy
         )
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
-    let fmt_layer = tracing_subscriber::fmt::layer();
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_thread_ids(true)
+        .with_target(true)
+        // .json();
+        .event_format(logfmt::MyFormatter);
     let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
     let registry = tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::filter::LevelFilter::DEBUG)
+        .with(tracing_subscriber::filter::LevelFilter::INFO)
         .with(fmt_layer)
         .with(opentelemetry);
     registry.try_init()?;
@@ -120,4 +124,40 @@ fn setup_tracing(args: &Opt) -> Result<(), Box<dyn std::error::Error + Send + Sy
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+mod logfmt {
+
+    use std::fmt;
+    use tracing_core::{Event, Subscriber};
+    use tracing_subscriber::fmt::{
+        format::{self, FormatEvent, FormatFields},
+        FmtContext, FormattedFields,
+    };
+    use tracing_subscriber::registry::LookupSpan;
+
+    pub struct MyFormatter;
+
+    impl<S, N> FormatEvent<S, N> for MyFormatter
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        N: for<'a> FormatFields<'a> + 'static,
+    {
+        fn format_event(&self, ctx: &FmtContext<'_, S, N>, mut writer: format::Writer<'_>, event: &Event<'_>) -> fmt::Result {
+            let span = ctx.event_scope().map_or(None, |scope| scope.last());
+            let metadata = event.metadata();
+            write!(
+                &mut writer,
+                "[{}] {}: {:?} ",
+                metadata.level(),
+                metadata.target(),
+                span.map_or("Id(None)".into(), |x| format!("{:?}", x.id())),
+            )?;
+
+            // Write fields on the event
+            ctx.field_format().format_fields(writer.by_ref(), event)?;
+
+            writeln!(writer)
+        }
+    }
 }

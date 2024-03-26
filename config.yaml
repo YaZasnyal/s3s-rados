@@ -15,12 +15,12 @@ db:
 
 storage:
   host: localhost
-  # port: 9001
-  port: 8015
+  port: 9001
+  # port: 8015
   access_key: qwe
   secret_key: asdfghjkl
   insecure: True
-  bucket: test
+  # bucket: test-ccdcf26d-387f-4ec6-9239-e450e3a69e59
 
 auth:
   access_key: qwe
