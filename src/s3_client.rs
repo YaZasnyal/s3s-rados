@@ -179,7 +179,7 @@ impl S3Client {
         tracing::info!(res = ?res.output, "complete_multipart_upload: upstream response");
         Ok(res)
     }
-
+ 
     #[tracing::instrument(level = "debug", skip_all)]
     pub async fn upload_part(
         &self,

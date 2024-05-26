@@ -230,6 +230,7 @@ impl S3 for RadosStore {
 
     #[tracing::instrument(level = "info", skip(self))]
     async fn delete_bucket(&self, req: S3Request<DeleteBucketInput>) -> S3Result<S3Response<DeleteBucketOutput>> {
+        tracing::info!(?req, "delete_bucket");
         if req.credentials.is_none() {
             return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
         }
@@ -239,12 +240,13 @@ impl S3 for RadosStore {
         };
         // TODO: check ownership
 
-        let gc_job_id = try_!(self.db.delete_bucket(&req.input.bucket, &bucket.location).await);
+        let gc_job_id = self.db.delete_bucket(&req.input.bucket, &bucket.location).await?;
         if let Ok(_) = self.blob.delete_bucket(&req.input.bucket, &bucket.location).await {
             // remove bucket from the gc queue. Ignore the error because GC should handle it just fine
             self.db.delete_bucket_complete(&gc_job_id).await.ok();
         }
         // even if backing store returned an error we return Ok. GC must retry this operation untill it completes
+        tracing::info!(?req, "delete_bucket finished");
         Ok(S3Response::new(DeleteBucketOutput {}))
     }
 
@@ -443,6 +445,24 @@ impl S3 for RadosStore {
         };
         tracing::info!(?output, "list_buckets finished");
         Ok(S3Response::new(output))
+    }
+
+    async fn list_multipart_uploads(
+        &self,
+        req: S3Request<ListMultipartUploadsInput>,
+    ) -> S3Result<S3Response<ListMultipartUploadsOutput>> {
+        //Err(s3_error!(NotImplemented, "ListMultipartUploads is not implemented yet"))
+        tracing::info!(?req, "list_multipart_uploads");
+        let Some(creds) = &req.credentials else {
+            return Err(s3s::S3Error::new(s3s::S3ErrorCode::AccessDenied));
+        };
+
+        let Some(bucket) = self.db.get_bucket(&req.input.bucket).await? else {
+            return Err(s3s::S3Error::new(s3s::S3ErrorCode::NoSuchBucket));
+        };
+
+        let res = self.db.list_multipart(&req.input).await;
+        todo!()
     }
 
     async fn list_object_versions(

@@ -185,7 +185,7 @@ impl PostgresDatabase {
     /// deletes buckets from the database and places it for garbage collector
     ///
     /// GC should remove all buckets from the backing stores
-    #[tracing::instrument(level = "info", skip(self), err)]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_bucket(&self, name: &str, location: &BlobLocation) -> Result<Uuid, s3s::S3Error> {
         let mut tx = try_!(self.db_conn.begin().await);
         let row = try_!(
@@ -614,7 +614,9 @@ impl PostgresDatabase {
     }
 
     #[tracing::instrument(level = "info", skip(self), err)]
-    pub async fn list_multipart(&self, bucket: &str) -> Result<Vec<MultipartUpload>, s3s::S3Error> {
+    pub async fn list_multipart(&self, req: &s3s::dto::ListMultipartUploadsInput) -> Result<Vec<MultipartUpload>, s3s::S3Error> {
+        let bucket = &req.bucket;
+
         todo!()
     }
 

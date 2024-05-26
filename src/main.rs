@@ -110,7 +110,7 @@ fn setup_tracing(args: &Opt) -> Result<(), Box<dyn std::error::Error + Send + Sy
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_thread_ids(true)
         .with_target(true)
-        // .json();
+        .json()
         .event_format(logfmt::MyFormatter);
     let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
     let registry = tracing_subscriber::Registry::default()
@@ -127,7 +127,6 @@ async fn shutdown_signal() {
 }
 
 mod logfmt {
-
     use std::fmt;
     use tracing_core::{Event, Subscriber};
     use tracing_subscriber::fmt::{
